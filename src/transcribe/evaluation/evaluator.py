@@ -39,24 +39,32 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     app = build_workflow(provider=provider, model_name=model_name, modality="single-cell")
     delta_agent = create_delta_agent(provider=provider, model_name=model_name)
     
-    # Check if necessary data exists
-    if cluster_col not in adata.obs or ground_truth_col not in adata.obs:
-         raise ValueError(f"Fields {cluster_col} or {ground_truth_col} missing in adata.obs")
+    # Check if we are in Evaluation Mode or Inference Mode
+    is_eval = False
+    if ground_truth_col and ground_truth_col in adata.obs:
+         is_eval = True
          
+    if cluster_col not in adata.obs:
+         raise ValueError(f"Cluster column '{cluster_col}' missing in adata.obs")
+         
+    if is_eval and ground_truth_col not in adata.obs:
+         raise ValueError(f"Ground truth column '{ground_truth_col}' missing in adata.obs")
+
     # To avoid Gemini Free Tier API rate limits (15 RPM), only evaluate a subset for quick testing
     clusters = adata.obs[cluster_col].unique()
     
     # Track metadata
     is_toy = "toy" in data_path.lower() or dataset_name.lower().endswith("toy")
     
-    logger.info(f"Evaluating {len(clusters)} clusters for {dataset_name}...")
+    logger.info(f"{'Evaluating' if is_eval else 'Annotating'} {len(clusters)} clusters for {dataset_name}...")
     
     # Map cluster ID to true label (majority vote or direct mapping)
     true_labels = {}
-    for cluster_id in clusters:
-        mask = adata.obs[cluster_col] == cluster_id
-        most_common = adata.obs[mask][ground_truth_col].mode().iloc[0]
-        true_labels[str(cluster_id)] = str(most_common)
+    if is_eval:
+        for cluster_id in clusters:
+            mask = adata.obs[cluster_col] == cluster_id
+            most_common = adata.obs[mask][ground_truth_col].mode().iloc[0]
+            true_labels[str(cluster_id)] = str(most_common)
         
     predictions = {}
     raw_results = {}
@@ -186,27 +194,21 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     # Generate UMAP corresponding to Prediction
     try:
         logger.info("Generating UMAP...")
-        # Map back to array, fallback to cluster ID if not annotated
-        def map_pred(c):
-            p = predictions.get(str(c), "")
-            if p in ["", "Unknown", "Error"]:
-                return f"Cluster {c}"
-            return p
-            
-        adata.obs['predicted_label'] = adata.obs[cluster_col].apply(map_pred).astype('category')
-        sc.pl.umap(adata, color='predicted_label', show=False, legend_loc=None)
+        import distinctipy
+        # We want each cluster to have a unique distinct color
+        adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
+        categories = adata.obs[cluster_col].cat.categories
+        colors = distinctipy.get_colors(len(categories))
+        hex_colors = [distinctipy.get_hex(c) for c in colors]
+        adata.uns[f'{cluster_col}_colors'] = hex_colors
         
-        # Extract colors assigned by scanpy
-        if 'predicted_label_colors' in adata.uns:
-            categories = adata.obs['predicted_label'].cat.categories
-            colors = adata.uns['predicted_label_colors']
-            label_to_color = dict(zip(categories, colors))
-            
-            # Map back to cluster IDs for the JSON report
-            for c in clusters:
-                lbl = map_pred(c)
-                if lbl in label_to_color:
-                    cluster_colors[str(c)] = label_to_color[lbl]
+        sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
+        
+        # Map back to cluster IDs for the JSON report
+        label_to_color = dict(zip(categories, hex_colors))
+        for c in clusters:
+            if str(c) in label_to_color:
+                cluster_colors[str(c)] = label_to_color[str(c)]
                     
         # Re-save JSON with colors updated
         eval_data["cluster_colors"] = cluster_colors
