@@ -1,0 +1,15 @@
+scanpy
+langchain
+langchain-google-genai
+langchain-openai
+langchain-pinecone
+pinecone-client
+python-dotenv
+langgraph
+pandas
+anndata
+matplotlib
+seaborn
+click
+pydantic
+pytest
