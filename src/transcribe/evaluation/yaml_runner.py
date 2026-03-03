@@ -53,8 +53,14 @@ def run_yaml_eval(config_path: str):
             
             try:
                 data_path = ds.get("path", "")
+                modality = ds.get("modality", "single-cell")
+                
                 if data_path.lower() == "toy_data":
-                    adata, c_col, t_col = fetch_toy_dataset()
+                    if modality == "spatial":
+                        from transcribe.evaluation.evaluator import fetch_spatial_toy_dataset
+                        adata, c_col, t_col = fetch_spatial_toy_dataset()
+                    else:
+                        adata, c_col, t_col = fetch_toy_dataset()
                     cluster_col = ds.get("cluster_col", c_col)
                     truth_col = None if is_infer else ds.get("ground_truth_col", t_col)
                 else:
@@ -75,7 +81,8 @@ def run_yaml_eval(config_path: str):
                     organism=ds.get("organism", "Human"),
                     tissue=ds.get("tissue", "Unknown"),
                     disease=ds.get("disease", "Normal"),
-                    num_tries=num_tries
+                    num_tries=num_tries,
+                    modality=modality
                 )
             except Exception as e:
                 logger.error(f"Error during {mode_label} of {run_name}: {e}")

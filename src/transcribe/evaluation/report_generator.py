@@ -61,8 +61,9 @@ def _load_dataset(item: Path) -> Optional[dict]:
         except Exception:
             pass
 
-    umap_path = item / "umap_predicted.png"
-    metrics   = data.get("metrics", {})
+    umap_path    = item / "umap_predicted.png"
+    spatial_path = item / "spatial_predicted.png"
+    metrics      = data.get("metrics", {})
 
     return {
         "run_id":          item.name.replace(" ", "_").lower(),
@@ -76,6 +77,7 @@ def _load_dataset(item: Path) -> Optional[dict]:
         "evaluator_results": data.get("evaluator_results", {}),
         "cluster_colors":  data.get("cluster_colors", {}),
         "umap_path":       f"{item.name}/umap_predicted.png" if umap_path.exists() else None,
+        "spatial_path":    f"{item.name}/spatial_predicted.png" if spatial_path.exists() else None,
         "metadata":        data.get("metadata", {}),
     }
 
@@ -209,13 +211,20 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
         meta.get("organism"), meta.get("tissue"), meta.get("disease"),
         "[TOY]" if meta.get("is_toy") else None,
         "[INFERENCE]" if not is_eval else None,
+        "[SPATIAL]" if meta.get("modality") == "spatial" else None,
     ] if p]
     tag_line = " · ".join(tag_parts)
 
-    # UMAP
-    umap_html = ""
-    if ds["umap_path"]:
-        umap_html = f'<div class="umap-wrap"><h3>Annotated UMAP</h3><img src="{ds["umap_path"]}" alt="UMAP {ds["name"]}"></div>'
+    # Plot
+    plot_html = ""
+    is_spatial = meta.get("modality") == "spatial"
+    
+    # If spatial, prioritize spatial_path. Otherwise use umap_path.
+    plot_path = ds.get("spatial_path") if is_spatial else ds.get("umap_path")
+    plot_label = "Spatial Plot" if is_spatial else "Annotated UMAP"
+    
+    if plot_path:
+        plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
 
     # Cluster rows + cards
     tbl_rows  = ""
@@ -313,7 +322,7 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
 
         <div class="experiment-grid">
             <div class="experiment-left">
-                {umap_html}
+                {plot_html}
             </div>
             <div class="experiment-right">
                 <div class="view-toggle-row">

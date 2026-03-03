@@ -102,13 +102,17 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
     workflow.add_node("alpha", run_alpha)
     workflow.add_node("gamma", run_gamma)
     
+    print(f"DEBUG: build_workflow modality='{modality}'")
+    
     if modality == "spatial":
+        print("DEBUG: Adding Beta node for spatial modality!")
         workflow.add_node("beta", run_beta)
         workflow.add_edge(START, "alpha")
         workflow.add_edge("alpha", "beta")
         workflow.add_edge("beta", "gamma")
     else:
         # single-cell routing
+        print("DEBUG: Single-cell routing, bypassing Beta.")
         workflow.add_edge(START, "alpha")
         workflow.add_edge("alpha", "gamma")
 

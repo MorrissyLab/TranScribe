@@ -1,0 +1,18 @@
+# TranScribe Spatial Evaluation Configuration
+
+mode: "eval"
+output: "results/eval_results"
+num_tries: 1
+
+models:
+  - "gemma-3-12b-it"
+
+datasets:
+  - name: "VisiumSquidpyToy"
+    path: "toy_data"
+    cluster_col: "blind_cluster"
+    ground_truth_col: "cluster"
+    modality: "spatial"
+    organism: "Mouse"
+    tissue: "Brain"
+    disease: "Normal"

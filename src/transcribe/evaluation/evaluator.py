@@ -26,7 +26,25 @@ def fetch_toy_dataset():
          raise
     return adata, "blind_cluster", "louvain"
 
-def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1):
+def fetch_spatial_toy_dataset():
+    """Fetches the Squidpy Visium H&E toy dataset for spatial evaluation."""
+    logger.info("Fetching Visium H&E toy dataset from Squidpy...")
+    try:
+         import squidpy as sq
+         adata = sq.datasets.visium_hne_adata()
+         # The ground truth is 'cluster'
+         adata.obs['blind_cluster'] = adata.obs['cluster'].cat.codes.astype(str).astype('category')
+         # Pre-compute spatial neighbors for Agent Beta
+         sq.gr.spatial_neighbors(adata)
+    except ImportError:
+         logger.error("Squidpy is required for the spatial toy dataset. Install it with `pip install squidpy`.")
+         raise
+    except Exception as e:
+         logger.error(f"Failed to fetch visium dataset from squidpy: {e}")
+         raise
+    return adata, "blind_cluster", "cluster"
+
+def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell"):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
@@ -37,7 +55,7 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     dataset_out_dir = Path(out_dir) / actual_run_name
     dataset_out_dir.mkdir(parents=True, exist_ok=True)
 
-    app = build_workflow(provider=provider, model_name=model_name, modality="single-cell")
+    app = build_workflow(provider=provider, model_name=model_name, modality=modality)
     delta_agent = create_delta_agent(provider=provider, model_name=model_name)
     
     # Check if we are in Evaluation Mode or Inference Mode
@@ -78,6 +96,7 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     
     from transcribe.core.llm_factory import LLMFactory
     from transcribe.core.schema import FinalAnnotation
+    from transcribe.tools.scanpy_utils import build_nichecard
     import json as json_builtin
     
     for cluster_id in clusters:
@@ -91,11 +110,17 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
             cluster_degs[cid_str] = top_degs
             expr_profile = get_expression_profile(adata, cluster_col, cid_str, top_degs)
             
+            nichecard = {}
+            if modality == "spatial":
+                nichecard = build_nichecard(adata, cluster_col, cid_str)
+                logger.info(f"Spatial Nichecard for {cid_str}: {nichecard}")
+            
             state_input = {
                  "cluster_id": cid_str,
                  "metadata": metadata,
                  "top_degs": top_degs,
                  "expression_profile": expr_profile,
+                 "spatial_neighbor_frequencies": nichecard,
                  "messages": []
             }
             candidate_anns = []
@@ -216,7 +241,8 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
             "organism": organism,
             "tissue": tissue,
             "disease": disease,
-            "num_tries": num_tries
+            "num_tries": num_tries,
+            "modality": modality
         },
         "metrics": {
             "accuracy": float(acc),
@@ -235,9 +261,9 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     with open(dataset_out_dir / "eval_communication_trace.json", "w") as f:
         json.dump(traces, f, indent=4)
         
-    # Generate UMAP corresponding to Prediction
+    # Generate Plot corresponding to Prediction
     try:
-        logger.info("Generating UMAP...")
+        logger.info(f"Generating {'Spatial Plot' if modality == 'spatial' else 'UMAP'}...")
         import distinctipy
         # We want each cluster to have a unique distinct color
         adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
@@ -246,7 +272,20 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
         hex_colors = [distinctipy.get_hex(c) for c in colors]
         adata.uns[f'{cluster_col}_colors'] = hex_colors
         
-        sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
+        if modality == "spatial":
+            import squidpy as sq
+            # We must specify library_id to avoid warnings if not set, or just let Squidpy find it
+            try:
+                lib_id = list(adata.uns['spatial'].keys())[0]
+            except Exception:
+                lib_id = None
+                
+            fig, ax = plt.subplots()
+            sq.pl.spatial_scatter(adata, color=cluster_col, shape=None, ax=ax, library_id=lib_id, legend_loc=None)
+            plot_filename = "spatial_predicted.png"
+        else:
+            sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
+            plot_filename = "umap_predicted.png"
         
         # Map back to cluster IDs for the JSON report
         label_to_color = dict(zip(categories, hex_colors))
@@ -261,7 +300,7 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
             
         plt.title(actual_run_name)
         plt.tight_layout()
-        plt.savefig(f"{dataset_out_dir}/umap_predicted.png", bbox_inches="tight")
+        plt.savefig(f"{dataset_out_dir}/{plot_filename}", bbox_inches="tight")
         plt.close()
     except Exception as e:
         logger.warning(f"Failed to generate UMAPs: {e}")
