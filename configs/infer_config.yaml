@@ -1,0 +1,14 @@
+mode: "infer"
+provider: "gemini"
+output: "results/infer_results"
+num_tries: 1
+models:
+  - "gemma-3-12b-it"
+datasets:
+  - name: "PBMC3kToy"
+    path: "toy_data"
+    modality: "single-cell"
+    cluster_col: "blind_cluster"
+    organism: "Human"
+    tissue: "PBMC"
+    disease: "Normal"

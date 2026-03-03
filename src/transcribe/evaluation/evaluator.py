@@ -141,7 +141,10 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
             if ann:
                 predictions[cid_str] = ann.cell_type
                 raw_results[cid_str] = ann.dict() if hasattr(ann, 'dict') else ann
-                logger.info(f"Predicted: {ann.cell_type} | Truth: {true_labels[cid_str]}")
+                if is_eval:
+                    logger.info(f"Predicted: {ann.cell_type} | Truth: {true_labels[cid_str]}")
+                else:
+                    logger.info(f"Predicted: {ann.cell_type}")
             else:
                 predictions[cid_str] = "Unknown"
         except Exception as e:

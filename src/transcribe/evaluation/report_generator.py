@@ -98,6 +98,7 @@ def _sidebar_link(ds: dict) -> str:
 
 def _summary_tab(datasets: List[dict]) -> str:
     has_eval   = any(d["metadata"].get("is_eval", True) for d in datasets)
+    all_infer  = not has_eval
     total_dur  = sum(d["metadata"].get("duration_seconds", 0) for d in datasets)
     avg_dur    = total_dur / len(datasets) if datasets else 0
 
@@ -115,41 +116,10 @@ def _summary_tab(datasets: List[dict]) -> str:
             f'<td>{type_str}</td></tr>\n'
         )
 
-    barplot_html = ""
-    if has_eval:
-        barplot_html = """
-        <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-                <h3 style="margin:0">Biological Accuracy — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
-                <div style="display:flex;gap:7px;align-items:center">
-                    <span style="font-size:0.78rem;color:#8b949e">View by:</span>
-                    <button class="btn-toggle active filter-btn" onclick="setPlotMode('model',this)">Model</button>
-                    <button class="btn-toggle filter-btn" onclick="setPlotMode('dataset',this)">Dataset</button>
-                    <button class="btn-toggle filter-btn" onclick="setPlotMode('all',this)">All</button>
-                </div>
-            </div>
-            <div id="sec_filters" style="display:flex;gap:8px;justify-content:center;margin-bottom:14px;flex-wrap:wrap"></div>
-            <div id="bar_area" class="bar-area"></div>
-            <div id="bar_legend" style="display:none;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap"></div>
-        </div>"""
-
-    perf = f"""
-        <div style="margin-top:26px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-            <h3 style="border-bottom:1px solid var(--border);padding-bottom:11px;margin-bottom:16px">Run Performance</h3>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
-                <div class="stat-tile"><div class="stat-label">Avg Duration</div>
-                    <div class="stat-value" style="color:var(--blue)">{avg_dur:.1f}s</div></div>
-                <div class="stat-tile"><div class="stat-label">Total Run Time</div>
-                    <div class="stat-value" style="color:var(--purple)">{total_dur:.1f}s</div></div>
-                <div class="stat-tile"><div class="stat-label">Experiments</div>
-                    <div class="stat-value">{len(datasets)}</div></div>
-            </div>
-        </div>"""
-
-    return f"""
-    <div id="tab_summary" class="tab-pane">
-        <div style="text-align:center;margin-bottom:28px">
-            <h1>Overall Evaluation Summary</h1>
+    # Accuracy badges – only show when there's at least one eval dataset
+    badges_html = ""
+    if not all_infer:
+        badges_html = """
             <div style="display:flex;gap:30px;justify-content:center;margin-top:16px;flex-wrap:wrap">
                 <div style="text-align:center">
                     <div style="font-size:.85rem;color:#8b949e;margin-bottom:6px">Avg Naive Accuracy</div>
@@ -159,7 +129,47 @@ def _summary_tab(datasets: List[dict]) -> str:
                     <div style="font-size:.85rem;color:var(--purple);margin-bottom:6px">Avg Biological Accuracy</div>
                     <div id="badge_bio" class="badge badge-high" style="font-size:1.7rem;padding:8px 24px;border:2px solid var(--purple);background:rgba(188,140,255,.08)">—</div>
                 </div>
+            </div>"""
+
+    barplot_html = ""
+    if has_eval:
+        barplot_html = """
+        <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+                <h3 style="margin:0">Biological Accuracy — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
+                <div style="display:flex;gap:7px;align-items:center">
+                    <span style="font-size:0.78rem;color:#8b949e">View by:</span>
+                    <button class="btn-toggle filter-btn" onclick="setPlotMode('model',this)">Model</button>
+                    <button class="btn-toggle filter-btn" onclick="setPlotMode('dataset',this)">Dataset</button>
+                    <button class="btn-toggle active filter-btn" onclick="setPlotMode('all',this)">All</button>
+                </div>
             </div>
+            <div id="sec_filters" style="display:flex;gap:8px;justify-content:center;margin-bottom:14px;flex-wrap:wrap"></div>
+            <div id="bar_area" class="bar-area"></div>
+            <div id="bar_legend" style="display:none;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap"></div>
+        </div>"""
+
+    heading = "Overall Inference Summary" if all_infer else "Overall Evaluation Summary"
+    run_label = "Runs" if all_infer else "Experiments"
+
+    perf = f"""
+        <div style="margin-top:26px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
+            <h3 style="border-bottom:1px solid var(--border);padding-bottom:11px;margin-bottom:16px">Run Performance</h3>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
+                <div class="stat-tile"><div class="stat-label">Avg Duration</div>
+                    <div class="stat-value" style="color:var(--blue)">{avg_dur:.1f}s</div></div>
+                <div class="stat-tile"><div class="stat-label">Total Run Time</div>
+                    <div class="stat-value" style="color:var(--purple)">{total_dur:.1f}s</div></div>
+                <div class="stat-tile"><div class="stat-label">{run_label}</div>
+                    <div class="stat-value">{len(datasets)}</div></div>
+            </div>
+        </div>"""
+
+    return f"""
+    <div id="tab_summary" class="tab-pane">
+        <div style="text-align:center;margin-bottom:28px">
+            <h1>{heading}</h1>
+            {badges_html}
         </div>
 
         {barplot_html}
@@ -284,7 +294,7 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
 
     status_th = "<th>✓</th>" if is_eval else ""
     truth_th  = "<th>Ground Truth</th>" if is_eval else ""
-    thead     = f"<tr>{status_th}<th>Cluster</th>{truth_th}<th>Predicted</th><th>Conf.</th><th>Top DEGs</th><th>Actions</th></tr>"
+    thead     = f"<tr>{status_th}<th>C</th>{truth_th}<th>Predicted</th><th>Conf.</th><th>Top DEGs</th><th>Actions</th></tr>"
 
     return f"""
     <div id="tab_exp_{run_id}" class="tab-pane">
@@ -301,22 +311,27 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
             <div class="stat-tile" style="display:flex;flex-direction:column;gap:6px;align-items:center">{acc_html}</div>
         </div>
 
-        {umap_html}
+        <div class="experiment-grid">
+            <div class="experiment-left">
+                {umap_html}
+            </div>
+            <div class="experiment-right">
+                <div class="view-toggle-row">
+                    <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
+                    <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>
+                </div>
 
-        <div class="view-toggle-row">
-            <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
-            <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>
+                <div id="tbl_{run_id}" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px">
+                    <h3 style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px">Cluster Details</h3>
+                    <table class="data-table">
+                        <thead>{thead}</thead>
+                        <tbody>{tbl_rows}</tbody>
+                    </table>
+                </div>
+
+                <div id="cards_{run_id}" class="cluster-grid" style="display:none">{card_html}</div>
+            </div>
         </div>
-
-        <div id="tbl_{run_id}" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px">
-            <h3 style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px">Cluster Details</h3>
-            <table class="data-table">
-                <thead>{thead}</thead>
-                <tbody>{tbl_rows}</tbody>
-            </table>
-        </div>
-
-        <div id="cards_{run_id}" class="cluster-grid" style="display:none">{card_html}</div>
     </div>
     """
 

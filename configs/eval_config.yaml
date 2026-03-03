@@ -1,5 +1,6 @@
+mode: "eval"
 provider: "gemini"
-output: "eval_results"
+output: "results/eval_results"
 num_tries: 1
 models:
   - "gemma-3-4b-it"
