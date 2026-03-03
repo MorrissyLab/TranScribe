@@ -1,0 +1,16 @@
+provider: "gemini"
+output: "eval_results"
+num_tries: 1
+models:
+  - "gemma-3-4b-it"
+  - "gemma-3-12b-it"
+  - "gemma-3-27b-it"
+datasets:
+  - name: "PBMC3kToy"
+    path: "toy_data"
+    modality: "single-cell"
+    cluster_col: "blind_cluster"
+    ground_truth_col: "louvain"
+    organism: "Human"
+    tissue: "PBMC"
+    disease: "Normal"

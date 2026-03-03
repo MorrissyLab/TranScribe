@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 from typing_extensions import TypedDict
 
 class CandidateAnnotation(BaseModel):
     """A single candidate cell type annotation."""
     cell_type: str = Field(description="Proposed cell type name.")
-    confidence: float = Field(description="Confidence score between 0.0 and 1.0.")
+    confidence: Literal["high", "medium", "low"] = Field(description="Confidence level of this candidate: 'high', 'medium', or 'low'.")
     reasoning: str = Field(description="Brief reasoning for this annotation.")
 
 class CandidateList(BaseModel):
@@ -17,7 +17,7 @@ class FinalAnnotation(BaseModel):
     cluster_id: str = Field(description="The cluster being annotated.")
     cell_type: str = Field(description="Standardized Cell Ontology type.")
     ontology_id: str = Field(default="", description="Optional Cell Ontology ID (e.g., CL:0000000).")
-    confidence: float = Field(description="Final confidence score.")
+    confidence: Literal["high", "medium", "low"] = Field(description="Final categorical confidence level: 'high', 'medium', or 'low'.")
     reasoning_chain: str = Field(description="Full reasoning chain explaining the decision.")
 
 class EvaluationMatch(BaseModel):

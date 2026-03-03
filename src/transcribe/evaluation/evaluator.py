@@ -26,14 +26,15 @@ def fetch_toy_dataset():
          raise
     return adata, "blind_cluster", "louvain"
 
-def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data"):
+def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
     start_time_iso = datetime.now().isoformat()
     start_ts = time.time()
     
-    dataset_out_dir = Path(out_dir) / dataset_name
+    actual_run_name = run_name if run_name else dataset_name
+    dataset_out_dir = Path(out_dir) / actual_run_name
     dataset_out_dir.mkdir(parents=True, exist_ok=True)
 
     app = build_workflow(provider=provider, model_name=model_name, modality="single-cell")
@@ -75,6 +76,10 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
     
     metadata = {"organism": organism, "tissue_type": tissue, "disease": disease}
     
+    from transcribe.core.llm_factory import LLMFactory
+    from transcribe.core.schema import FinalAnnotation
+    import json as json_builtin
+    
     for cluster_id in clusters:
         # Rate limit protection for Gemini/Gemma Free Tier (15 RPM)
         time.sleep(2)
@@ -93,10 +98,45 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
                  "expression_profile": expr_profile,
                  "messages": []
             }
-            final_state = app.invoke(state_input)
-            ann = final_state.get("final_annotation")
+            candidate_anns = []
+            final_states = []
             
-            traces[cid_str] = final_state.get("messages", [])
+            for attempt in range(num_tries):
+                if attempt > 0:
+                    time.sleep(2)
+                final_state = app.invoke(state_input)
+                final_states.append(final_state)
+                if final_state.get("final_annotation"):
+                    candidate_anns.append(final_state.get("final_annotation"))
+            
+            ann = None
+            if len(candidate_anns) == 1:
+                ann = candidate_anns[0]
+                final_state = final_states[0]
+            elif len(candidate_anns) > 1:
+                # Prompt the ontologist/LLM to select the best one
+                llm = LLMFactory.get_provider(provider).get_llm(model_name, temperature=0.1)
+                sys_msg = "You are an expert Ontologist. You are given several candidate cell type annotations for a cell cluster. Select the best one."
+                usr_msg = f"Tissue: {tissue}\\nDisease: {disease}\\n\\nCandidates:\\n"
+                for idx, c in enumerate(candidate_anns):
+                    usr_msg += f"[{idx+1}] Cell Type: {c.cell_type}\\nConfidence: {c.confidence}\\nReasoning: {c.reasoning_chain}\\n\\n"
+                usr_msg += "Respond ONLY with the EXACT 'Cell Type' string of the best candidate from the list above. Do not include any other text."
+                
+                try:
+                    from langchain_core.messages import SystemMessage, HumanMessage
+                    resp = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=usr_msg)])
+                    best_cell_type = resp.content.strip()
+                    # Find the candidate matching the selected cell type
+                    ann = next((c for c in candidate_anns if c.cell_type.lower() == best_cell_type.lower()), candidate_anns[-1])
+                    final_state = next((s for s, c in zip(final_states, candidate_anns) if c == ann), final_states[-1])
+                except Exception as e:
+                    logger.error(f"Error resolving multiple tries: {e}")
+                    ann = candidate_anns[-1]
+                    final_state = final_states[-1]
+            elif final_states:
+                final_state = final_states[-1]
+                
+            traces[cid_str] = [msg.dict() if hasattr(msg, 'dict') else msg for msg in final_state.get("messages", [])] if final_state else []
             
             if ann:
                 predictions[cid_str] = ann.cell_type
@@ -172,7 +212,8 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
             "is_eval": is_eval,
             "organism": organism,
             "tissue": tissue,
-            "disease": disease
+            "disease": disease,
+            "num_tries": num_tries
         },
         "metrics": {
             "accuracy": float(acc),
@@ -198,7 +239,7 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
         # We want each cluster to have a unique distinct color
         adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
         categories = adata.obs[cluster_col].cat.categories
-        colors = distinctipy.get_colors(len(categories))
+        colors = distinctipy.get_colors(len(categories), rng=42)
         hex_colors = [distinctipy.get_hex(c) for c in colors]
         adata.uns[f'{cluster_col}_colors'] = hex_colors
         
@@ -215,7 +256,7 @@ def evaluate_dataset(adata, cluster_col: str, ground_truth_col: str = None, data
         with open(dataset_out_dir / "eval_report.json", "w") as f:
             json.dump(eval_data, f, indent=4)
             
-        plt.title(dataset_name)
+        plt.title(actual_run_name)
         plt.tight_layout()
         plt.savefig(f"{dataset_out_dir}/umap_predicted.png", bbox_inches="tight")
         plt.close()

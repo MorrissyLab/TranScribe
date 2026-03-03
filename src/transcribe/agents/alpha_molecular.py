@@ -12,7 +12,8 @@ def create_alpha_agent(provider: str = "gemini", model_name: str = "gemini-2.5-f
         "You are Agent Alpha, the Molecular Analyst. "
         "Your task is to analyze transcriptomics to propose candidate cell types "
         "or functional states based exclusively on the given differential expression profile. "
-        "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease)."
+        "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease). "
+        "For your confidence rating, you MUST output one of 'high', 'medium', or 'low'."
     )
     
     user_prompt = (

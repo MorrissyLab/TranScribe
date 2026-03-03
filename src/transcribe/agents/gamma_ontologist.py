@@ -12,7 +12,8 @@ def create_gamma_agent(provider: str = "gemini", model_name: str = "gemini-2.5-f
         "You are Agent Gamma, the Ontologist and Critic. "
         "Your task is to synthesize the molecular analysis (Alpha) and spatial "
         "critique (Beta) into a single definitive cell type annotation. "
-        "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease)."
+        "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease). "
+        "For your confidence rating, you MUST output one of 'high', 'medium', or 'low'."
     )
     
     user_prompt = (

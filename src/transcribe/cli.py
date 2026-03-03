@@ -5,9 +5,11 @@ from pathlib import Path
 from transcribe.workflow.graph import build_workflow
 from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile, build_nichecard
 from transcribe.config import logger, DEFAULT_MODEL_NAME, setup_logging
+from transcribe.evaluation.yaml_runner import run_yaml_eval
 
 @click.command()
-@click.option('--data_path', required=True, help='Path to the .h5ad dataset file.')
+@click.option('--eval_config', default=None, type=str, help='Path to YAML config for multi-model benchmarking.')
+@click.option('--data_path', required=False, help='Path to the .h5ad dataset file.')
 @click.option('--modality', type=click.Choice(['single-cell', 'spatial']), default='single-cell', help='Data modality.')
 @click.option('--cluster_col', default='leiden', help='Column in adata.obs containing cluster IDs.')
 @click.option('--output', default='results', help='Directory to save the annotation reports.')
@@ -18,8 +20,17 @@ from transcribe.config import logger, DEFAULT_MODEL_NAME, setup_logging
 @click.option('--disease', default='Normal', help='Disease state (e.g. Normal, Tumor).')
 @click.option('--use_rag', is_flag=True, help='Enable RAG context retrieval for Agent Gamma.')
 @click.option('--pinecone_index', default='', help='Pinecone Index to retrieve from if --use_rag is passed.')
-def cli(data_path: str, modality: str, cluster_col: str, output: str, provider: str, model: str, organism: str, tissue: str, disease: str, use_rag: bool, pinecone_index: str):
+def cli(eval_config: str, data_path: str, modality: str, cluster_col: str, output: str, provider: str, model: str, organism: str, tissue: str, disease: str, use_rag: bool, pinecone_index: str):
     """TranScribe: Automated Annotation of Transcriptomics via Tri-Agent Framework."""
+    
+    # Check if user wants YAML multi-model sweep
+    if eval_config:
+        run_yaml_eval(eval_config)
+        return
+        
+    if not data_path:
+        raise click.UsageError("Missing --data_path: You must provide either --data_path or --eval_config.")
+        
     out_dir = Path(output)
     out_dir.mkdir(parents=True, exist_ok=True)
     
