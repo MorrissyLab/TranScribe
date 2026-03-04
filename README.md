@@ -8,6 +8,7 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 
 - **Tri-Agent Framework**: Alpha (Molecular Profiler), Beta (Spatial Analyst), and Gamma (Ontologist) work in concert.
 - **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
+- **Factorized Data Support**: Annotate latent factors from NMF, cNMF, or other matrix decomposition methods.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
 - **Interactive Reports**: Rich HTML dashboards with sticky UMAPs, **Spatial Plots** (without legends for clarity), trace logs, and reasoning cards.
 - **Simplified CLI**: Unified configuration-driven workflow.
@@ -24,12 +25,14 @@ graph TD
     subgraph "Input Layer"
         H5[h5ad / AnnData]
         CSV[Marker Gene CSV]
+        FAC[Factorized Matrix CSV/TSV]
         H5 --> PRE[Scanpy/Squidpy Preprocessing]
     end
 
     subgraph "Core Orchestration (Agentic Workflow)"
         PRE --> Alpha[Agent Alpha: Molecular Profiler]
         CSV --> Alpha
+        FAC --> Alpha
         PRE --> Beta[Agent Beta: Spatial Analyst]
         Alpha --> Gamma[Agent Gamma: Ontologist]
         Beta --> Gamma
@@ -48,8 +51,9 @@ graph TD
 ```
 
 ### 2. Data Types & Inputs
-- **Single-Cell Input**: Standard `.h5ad` files or standalone **Marker Gene CSV** files (directed to Agent Alpha). Requires a `cluster_col` (e.g., Leiden/Louvain) for `.h5ad` inputs.
-- **Spatial Input**: Visium-style `.h5ad` with `adata.uns['spatial']`. Supported modalities: `single-cell`, `spatial`.
+- **Single-Cell Input**: Standard `.h5ad` files or standalone **Marker Gene CSV** files (directed to Agent Alpha). Requires a `cluster_col` (Leiden/Louvain) for `.h5ad` inputs.
+- **Factorized Input**: Directly annotate gene weights/spectra from **NMF/cNMF matrix decomposition** (CSV, TSV, TXT formats).
+- **Spatial Input**: Visium-style `.h5ad` with `adata.uns['spatial']`. Supported modalities: `single-cell`, `spatial`, `factorized`.
 - **RAG Enrichment (Optional)**: If enabled, Agent Gamma queries a vector database (Pinecone) for the latest cell ontology definitions to resolve ambiguous annotations.
 
 ### 3. Execution Pipelines
@@ -96,13 +100,16 @@ Configs are stored in the `configs/` directory. Define your models, datasets, an
 
 ```bash
 # Run multi-model evaluation benchmark
-python -m transcribe.cli --config configs/eval_config.yaml
+python -m transcribe.cli --config configs/eval_single_cell_config.yaml
 
 # Run spatial transcriptomics evaluation (Visium)
 python -m transcribe.cli --config configs/eval_spatial_config.yaml
 
+# Run factorized data evaluation (cNMF/spOT-NMF)
+python -m transcribe.cli --config configs/eval_factorized_config.yaml
+
 # Run multi-model inference annotation
-python -m transcribe.cli --config configs/infer_config.yaml
+python -m transcribe.cli --config configs/infer_single_cell_config.yaml
 ```
 
 ### Option B: Single-File Inference

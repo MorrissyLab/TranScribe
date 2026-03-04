@@ -1,0 +1,20 @@
+# TranScribe Factorized Inference Configuration
+
+mode: "infer"
+provider: "gemini"
+output: "results/infer_results"
+num_tries: 1
+
+models:
+  - "gemma-3-27b-it"
+
+datasets:
+  - name: "Sarcoma_cNMF_k10_inference"
+    path: "data/factorized/moh_sarcoma_cnmf.gene_spectra_score.k_10.dt_0_1.txt"
+    modality: "factorized"
+    factorized_type: "sc"
+    organism: "Human"
+    tissue: "Sarcoma"
+    disease: "Cancer"
+    # To overlay factors on raw spatial/sc data, provide the h5ad path here:
+    # raw_data_path: "data/factorized/raw_data.h5ad"

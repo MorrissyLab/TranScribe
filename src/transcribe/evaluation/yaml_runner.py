@@ -2,7 +2,9 @@ import yaml
 from pathlib import Path
 from transcribe.config import logger
 import scanpy as sc
+import pandas as pd
 from transcribe.evaluation.evaluator import evaluate_dataset, fetch_toy_dataset
+from transcribe.tools.factor_utils import load_factorized_data
 
 def run_yaml_eval(config_path: str):
     """Parses a YAML configuration and runs evaluate_dataset on cross products of models x datasets.
@@ -63,13 +65,29 @@ def run_yaml_eval(config_path: str):
                         adata, c_col, t_col = fetch_toy_dataset()
                     cluster_col = ds.get("cluster_col", c_col)
                     truth_col = None if is_infer else ds.get("ground_truth_col", t_col)
+                    factorized_df = None
+                    raw_data_path = None
+                    factorized_type = "sc"
                 else:
-                    adata = sc.read_h5ad(data_path)
-                    cluster_col = ds.get("cluster_col", "leiden")
-                    truth_col = None if is_infer else ds.get("ground_truth_col", None)
+                    if modality == "factorized":
+                        factorized_df = load_factorized_data(data_path)
+                        adata = None
+                        cluster_col = ds.get("cluster_col", "factor")
+                        truth_col = None if is_infer else ds.get("ground_truth_path", None)
+                        raw_data_path = ds.get("raw_data_path", None)
+                        factorized_type = ds.get("factorized_type", "sc")
+                    else:
+                        adata = sc.read_h5ad(data_path)
+                        factorized_df = None
+                        cluster_col = ds.get("cluster_col", "leiden")
+                        truth_col = None if is_infer else ds.get("ground_truth_col", None)
+                        raw_data_path = None
+                        factorized_type = "sc"
                     
                 evaluate_dataset(
                     adata=adata,
+                    factorized_df=factorized_df,
+                    raw_data_path=raw_data_path,
                     data_path=data_path,
                     cluster_col=cluster_col,
                     ground_truth_col=truth_col,
@@ -82,7 +100,8 @@ def run_yaml_eval(config_path: str):
                     tissue=ds.get("tissue", "Unknown"),
                     disease=ds.get("disease", "Normal"),
                     num_tries=num_tries,
-                    modality=modality
+                    modality=modality,
+                    factorized_type=factorized_type
                 )
             except Exception as e:
                 logger.error(f"Error during {mode_label} of {run_name}: {e}")
