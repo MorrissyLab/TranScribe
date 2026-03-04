@@ -27,21 +27,26 @@ graph TD
         H5[h5ad / AnnData]
         CSV[Marker Gene CSV]
         FAC[Factorized Matrix CSV/TSV]
-        H5 --> PRE[Scanpy/Squidpy Preprocessing]
+    end
+
+    subgraph "Tools Layer"
+        PRE[Scanpy/Squidpy Preprocessing]
+        Ann[Anntools: Marker Overlap & Pathways]
+        H5 --> PRE
+        FAC --> Ann
     end
 
     subgraph "Core Orchestration (Agentic Workflow)"
         PRE --> Alpha[Agent Alpha: Molecular Profiler]
         CSV --> Alpha
-        FAC --> Ann[Anntools: Marker Overlap & Pathways]
         Ann --> Alpha
         PRE --> Beta[Agent Beta: Spatial Analyst]
+    end
+
+    subgraph "Final Decision Layer (Agent Gamma)"
         Alpha --> Gamma[Agent Gamma: Ontologist]
         Beta --> Gamma
-        
-        subgraph "Optional Enrichment"
-            DB[(Pinecone/RAG)] -.->|Cell Ontology Context| Gamma
-        end
+        DB[(Pinecone/RAG)] -.->|Cell Ontology| Gamma
     end
 
     subgraph "Validation & Reporting"
