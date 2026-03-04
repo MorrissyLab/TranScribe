@@ -16,3 +16,4 @@ pytest
 distinctipy
 gprofiler-official
 rbo
+squidpy
