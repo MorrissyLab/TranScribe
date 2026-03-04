@@ -55,6 +55,16 @@ graph TD
         GT[Ground Truth] --> Delta
         Delta --> V[Interactive HTML Report]
     end
+
+    classDef agent fill:#283593,color:#fff,stroke:#1a237e,stroke-width:2px;
+    classDef tool fill:#f5f5f5,stroke:#616161,stroke-width:1px;
+    classDef input fill:#fff,stroke:#333,stroke-dasharray: 5 5;
+    classDef database fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+
+    class Alpha,Beta,Gamma,Delta agent;
+    class PRE,Ann,R tool;
+    class H5,CSV,FAC,GT input;
+    class DB database;
 ```
 
 ### 2. Data Types & Inputs
