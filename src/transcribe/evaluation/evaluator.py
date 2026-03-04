@@ -16,6 +16,9 @@ from transcribe.config import logger, DEFAULT_MODEL_NAME
 from transcribe.evaluation.datasets import fetch_toy_dataset, fetch_spatial_toy_dataset
 from transcribe.evaluation.plotting import plot_evaluation_results
 
+from transcribe.anntools.marker_overlap import compute_genesets_annotation
+from transcribe.anntools.pathway_enrichment import run_topics_pathway_enrichment
+
 def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
@@ -89,6 +92,60 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
     from transcribe.tools.scanpy_utils import build_nichecard
     import json as json_builtin
     
+    # Run anntools for factorized mode
+    marker_overlap_df = None
+    pathway_enrichment_df = None
+    print(f"DEBUG: Checking if modality is factorized and factorized_df is provided (modality={modality})", flush=True)
+    if modality == "factorized" and factorized_df is not None:
+        try:
+            print("DEBUG: Inside factorized block, beginning anntools...", flush=True)
+            # We use a default geneset for marker overlap and pathway enrichment
+            # You can make these configurable later
+            geneset_name = "mouse_celltypes_all" if "mouse" in organism.lower() else "human_cancer_all"
+            
+            # 1. Run Marker Overlap
+            print(f"DEBUG: Running compute_genesets_annotation for {geneset_name}", flush=True)
+            try:
+                compute_genesets_annotation(
+                    rf_usages=factorized_df.T,
+                    gene_set_name=geneset_name,
+                    results_dir_path=str(dataset_out_dir),
+                    experiment_title=actual_run_name,
+                    ranking_method="mgs"
+                )
+            except Exception as e:
+                logger.warning(f"Error in compute_genesets_annotation (possibly plotting): {e}")
+
+            overlap_csv = os.path.join(dataset_out_dir, "marker_overlap_results", f"scores_{actual_run_name}_{geneset_name}.csv")
+            if os.path.exists(overlap_csv):
+                print(f"DEBUG: Found overlap csv: {overlap_csv}", flush=True)
+                marker_overlap_df = pd.read_csv(overlap_csv, index_col=0)
+                
+            # 2. Run Pathway Enrichment
+            genome = "mm10" if "mouse" in organism.lower() else "GRCh38"
+            print(f"DEBUG: Running run_topics_pathway_enrichment for GO:BP with genome {genome}", flush=True)
+            try:
+                run_topics_pathway_enrichment(
+                    rf_usages=factorized_df.T,
+                    gene_set="GO:BP", # Often used as default for valid gProfiler source
+                    results_dir_path=str(dataset_out_dir),
+                    genome=genome,
+                    experiment_title=actual_run_name
+                )
+            except Exception as e:
+                logger.warning(f"Error in run_topics_pathway_enrichment (possibly plotting): {e}")
+
+            pathway_csv = os.path.join(dataset_out_dir, "pathway_enrichment_results", f"readable_summary_{actual_run_name}_GO_BP_n1000.csv")
+            if os.path.exists(pathway_csv):
+                print(f"DEBUG: Found pathway csv: {pathway_csv}", flush=True)
+                pathway_enrichment_df = pd.read_csv(pathway_csv, index_col=0)
+                
+        except Exception as e:
+            logger.error(f"Error running anntools for factorized mode: {e}")
+            print(f"DEBUG: Caught exception in anntools: {e}", flush=True)
+            
+    print(f"DEBUG: Finished anntools block. Clusters: {len(clusters)}", flush=True)
+    
     for cluster_id in clusters:
         # Rate limit protection
         time.sleep(2)
@@ -115,8 +172,31 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
                  "top_degs": top_degs,
                  "expression_profile": expr_profile,
                  "spatial_neighbor_frequencies": nichecard,
+                 "marker_overlap": None,
+                 "pathway_enrichment": None,
                  "messages": []
             }
+            
+            if modality == "factorized":
+                if marker_overlap_df is not None and cid_str in marker_overlap_df.columns:
+                    top_markers = marker_overlap_df[cid_str].sort_values(ascending=False).head(3).to_dict()
+                    state_input["marker_overlap"] = top_markers
+#                if pathway_enrichment_df is not None and cid_str in pathway_enrichment_df.columns:
+#                    # Pathway enrichment CSV stores string representations, we will parse them back or just pass as strings
+#                    # Since schema expects Dict[str, float] for pathway_enrichment, and the CSV has format "term:score:name"
+#                    # let's extract it
+#                    top_pathways = {}
+#                    pathway_strings = pathway_enrichment_df[cid_str].dropna().head(10).tolist()
+#                    for p_str in pathway_strings:
+#                        try:
+#                            # format is usually ID:score:Name
+#                            parts = p_str.split(":", 2)
+#                            if len(parts) >= 2:
+#                                top_pathways[parts[0] + " " + (parts[2] if len(parts)>2 else "")] = float(parts[1])
+#                        except Exception:
+#                            pass
+#                    if top_pathways:
+#                        state_input["pathway_enrichment"] = top_pathways
             candidate_anns = []
             final_states = []
             

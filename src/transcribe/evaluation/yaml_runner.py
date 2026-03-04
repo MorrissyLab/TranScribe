@@ -117,3 +117,12 @@ def run_yaml_eval(config_path: str):
         generate_html_report(output_base)
     except Exception as e:
         logger.error(f"Error generating overall HTML report: {e}")
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Run TranScribe multiple-model evaluation pipeline")
+    parser.add_argument("config", nargs="?", default="test_factorized.yaml", help="Path to YAML configuration file")
+    args = parser.parse_args()
+    
+    print(f"Running evaluation with config: {args.config}")
+    run_yaml_eval(args.config)

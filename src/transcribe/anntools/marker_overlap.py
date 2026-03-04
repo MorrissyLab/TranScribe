@@ -67,12 +67,15 @@ def compute_genesets_annotation(
     logger.info(f"Saved overlap scores to {csv_path}")
 
     # Plot
-    plot_df_heatmap(
-        df_scores, 
-        title=f"{experiment_title}_{gene_set_name}", 
-        x_label="Topic/Cluster", 
-        y_label="Gene Set", 
-        output_dir=output_path, 
-        is_cluster=True
-    )
-    logger.info(f"Saved overlap plots to {output_path}")
+    try:
+        plot_df_heatmap(
+            df_scores, 
+            title=f"{experiment_title}_{gene_set_name}", 
+            x_label="Topic/Cluster", 
+            y_label="Gene Set", 
+            output_dir=output_path, 
+            is_cluster=True
+        )
+        logger.info(f"Saved overlap plots to {output_path}")
+    except Exception as e:
+        logger.warning(f"Could not render overlap plots: {e}")

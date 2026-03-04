@@ -25,6 +25,8 @@ def create_alpha_agent(provider: str = "gemini", model_name: str = "gemini-2.5-f
         "Cluster ID: {cluster_id}\n"
         "Top DEGs: {top_degs}\n"
         "Expression Profile: {expression_profile}\n"
+        "Marker Overlap (Top 3 Genesets): {marker_overlap}\n"
+        "Pathway Enrichment (Top 10 GO terms): {pathway_enrichment}\n"
     )
     
     return builder.build_structured_chain(system_prompt, user_prompt, CandidateList)

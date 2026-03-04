@@ -32,6 +32,8 @@ class AgentState(TypedDict):
     top_degs: List[str]
     expression_profile: Optional[Dict[str, float]]
     spatial_neighbor_frequencies: Optional[Dict[str, float]]
+    marker_overlap: Optional[Dict[str, float]]
+    pathway_enrichment: Optional[Dict[str, float]]
     alpha_candidates: Optional[CandidateList]
     beta_feedback: Optional[str]
     final_annotation: Optional[FinalAnnotation]

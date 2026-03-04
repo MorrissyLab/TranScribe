@@ -1,0 +1,45 @@
+[project]
+name = "transcribe"
+version = "0.1.0"
+description = "Tri-Agent Ontology Framework for Automated Transcriptomic Annotation"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "scanpy",
+    "squidpy",
+    "gprofiler-official",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "anndata",
+    "click",
+    "python-dotenv",
+    "pydantic",
+    "langchain",
+    "langchain-openai",
+    "langchain-google-genai",
+    "langchain-pinecone",
+    "langgraph",
+    "pinecone",
+    "distinctipy",
+    "rbo",
+    "setuptools<70.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+transcribe = "transcribe.cli:cli"
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

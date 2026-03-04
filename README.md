@@ -7,10 +7,11 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 ## 🧬 Key Features
 
 - **Tri-Agent Framework**: Alpha (Molecular Profiler), Beta (Spatial Analyst), and Gamma (Ontologist) work in concert.
-- **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Factorized Data Support**: Annotate latent factors from NMF, cNMF, or other matrix decomposition methods.
+- **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode, providing Agent Alpha with deep functional context beyond raw gene weights.
+- **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
-- **Interactive Reports**: Rich HTML dashboards with sticky UMAPs, **Spatial Plots** (without legends for clarity), trace logs, and reasoning cards.
+- **Interactive Reports**: Rich HTML dashboards with sticky UMAPs, **Spatial Plots**, trace logs, and reasoning cards.
 - **Simplified CLI**: Unified configuration-driven workflow.
 - **RAG Enabled**: Optional integration with Pinecone for knowledge-retrieval (Agent Gamma).
 
@@ -32,7 +33,8 @@ graph TD
     subgraph "Core Orchestration (Agentic Workflow)"
         PRE --> Alpha[Agent Alpha: Molecular Profiler]
         CSV --> Alpha
-        FAC --> Alpha
+        FAC --> Ann[Anntools: Marker Overlap & Pathways]
+        Ann --> Alpha
         PRE --> Beta[Agent Beta: Spatial Analyst]
         Alpha --> Gamma[Agent Gamma: Ontologist]
         Beta --> Gamma
@@ -64,7 +66,7 @@ graph TD
 
 TranScribe's orchestration consists of four specialized agents, each with a distinct biological mandate:
 
-- **Agent Alpha (Molecular Profiler)**: Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types. It focuses on identifying lineage-specific markers and functional states.
+- **Agent Alpha (Molecular Profiler)**: Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types. In factorized mode, it leverages **Anntools** outputs (marker overlap and pathway scores) to identify lineage-specific markers and functional states with high precision.
 - **Agent Beta (Spatial Analyst)**: Active only in spatial transcriptomics runs. It evaluates the "nichecard" (neighborhood frequencies) of a cluster to determine if Alpha's candidates are spatially plausible (e.g., verifying if a neuron is actually located in a neuronal neighborhood).
 - **Agent Gamma (Ontologist & Critic)**: The final decision-maker. It synthesizes the molecular evidence from Alpha and the spatial critique from Beta, optionally cross-referencing against an external Knowledge Base (RAG), to produce a standardized cell-type annotation.
 - **Agent Delta (The Evaluator)**: Specializes in biological nomenclature. During benchmarks, Delta compares predictions against ground truth labels to determine if they are "biologically equivalent" (e.g., matching "CD14+ Monocyte" with "Monocyte").
@@ -77,18 +79,20 @@ TranScribe's orchestration consists of four specialized agents, each with a dist
 git clone https://github.com/MorrissyLab/TranScribe.git
 cd TranScribe
 
-# Create and activate the conda environment
-conda create -n transcribe python=3.12 -y
-conda activate transcribe
+# Sync dependencies using uv
+uv sync
 
-# Install the package in editable mode
-pip install -e .
+# Activate the virtual environment
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+# source .venv/bin/activate
 ```
 
 ### 2. Environment Setup
 Create a `.env` file in the root directory:
 ```env
-GEMINI_API_KEY="your-api-key"
+GEMINI_API_KEY="[ENCRYPTION_KEY]"
 MODEL_NAME="gemma-3-12b-it"
 PINECONE_INDEX="your-index" (optional)
 ```

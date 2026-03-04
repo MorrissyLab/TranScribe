@@ -27,7 +27,9 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
             "disease": meta.get("disease", "Unknown"),
             "cluster_id": state["cluster_id"],
             "top_degs": state["top_degs"],
-            "expression_profile": state["expression_profile"]
+            "expression_profile": state["expression_profile"],
+            "marker_overlap": state.get("marker_overlap", "None Available"),
+            "pathway_enrichment": state.get("pathway_enrichment", "None Available")
         })
         messages = state.get("messages", [])
         messages.append({"agent": "Alpha", "input": {"cluster_id": state["cluster_id"], "top_degs": state["top_degs"]}, "output": result.dict() if hasattr(result, 'dict') else str(result)})
