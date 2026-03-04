@@ -8,6 +8,8 @@ import yaml
 from langchain_core.messages import HumanMessage
 
 def test_llm_communication(config_path):
+    from transcribe.config import setup_logging
+    setup_logging()
     logger.info(f"Loading config from {config_path}")
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)

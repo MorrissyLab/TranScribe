@@ -15,12 +15,22 @@ def setup_logging(level=logging.INFO, log_file=None):
         os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
         handlers.append(logging.FileHandler(log_file))
         
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=handlers
+    # Configure the 'transcribe' logger specifically
+    root_logger = logging.getLogger("transcribe")
+    root_logger.setLevel(level)
+    
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        
+    formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
     )
+    
+    for h in handlers:
+        h.setFormatter(formatter)
+        root_logger.addHandler(h)
     # Silence chatty libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)

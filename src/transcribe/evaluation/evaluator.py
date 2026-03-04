@@ -48,6 +48,7 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
+    print(f"DEBUG: Entering evaluate_dataset for {dataset_name} (modality={modality})", flush=True)
     start_time_iso = datetime.now().isoformat()
     start_ts = time.time()
     
@@ -152,11 +153,14 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
             for attempt in range(num_tries):
                 if attempt > 0:
                     time.sleep(2)
+                print(f"DEBUG: Invoking app for cluster {cid_str} (attempt {attempt+1})", flush=True)
                 final_state = app.invoke(state_input)
+                print(f"DEBUG: App finished for cluster {cid_str}", flush=True)
                 final_states.append(final_state)
                 if final_state.get("final_annotation"):
                     candidate_anns.append(final_state.get("final_annotation"))
             
+            print(f"DEBUG: Found {len(candidate_anns)} candidates for cluster {cid_str}", flush=True)
             ann = None
             if len(candidate_anns) == 1:
                 ann = candidate_anns[0]
@@ -226,11 +230,14 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
                 continue
                 
             try:
+                print(f"DEBUG: Invoking delta_agent for cluster {cid_str}", flush=True)
                 match_res = delta_agent.invoke({"true_label": true_l, "predicted_label": pred_l})
+                print(f"DEBUG: Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}", flush=True)
                 delta_results[cid_str] = match_res.dict() if hasattr(match_res, 'dict') else match_res
                 eval_matches.append(match_res.is_match)
                 logger.info(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
             except Exception as e:
+                print(f"DEBUG: Delta error for cluster {cid_str}: {e}", flush=True)
                 logger.error(f"Delta error for cluster {cid_str}: {e}")
                 delta_results[cid_str] = {"is_match": False, "explanation": f"Evaluator Error: {e}"}
                 eval_matches.append(False)

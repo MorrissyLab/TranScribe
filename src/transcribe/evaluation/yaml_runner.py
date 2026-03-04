@@ -7,6 +7,9 @@ from transcribe.evaluation.evaluator import evaluate_dataset, fetch_toy_dataset
 from transcribe.tools.factor_utils import load_factorized_data
 
 def run_yaml_eval(config_path: str):
+    import sys
+    print(f"DEBUG: run_yaml_eval starting with {config_path}")
+    sys.stdout.flush()
     """Parses a YAML configuration and runs evaluate_dataset on cross products of models x datasets.
     
     The YAML should contain a 'mode' key set to 'eval' or 'infer'.

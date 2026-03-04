@@ -16,6 +16,7 @@ def cli(config: str, data_path: str, cluster_col: str, output: str, dataset_name
     
     # YAML config mode (reads mode, provider, model, metadata from YAML)
     if config:
+        setup_logging()
         run_yaml_eval(config)
         return
         
