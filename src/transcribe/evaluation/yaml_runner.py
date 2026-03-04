@@ -3,7 +3,8 @@ from pathlib import Path
 from transcribe.config import logger
 import scanpy as sc
 import pandas as pd
-from transcribe.evaluation.evaluator import evaluate_dataset, fetch_toy_dataset
+from transcribe.evaluation.evaluator import evaluate_dataset
+from transcribe.evaluation.datasets import fetch_toy_dataset
 from transcribe.tools.factor_utils import load_factorized_data
 
 def run_yaml_eval(config_path: str):
@@ -62,7 +63,7 @@ def run_yaml_eval(config_path: str):
                 
                 if data_path.lower() == "toy_data":
                     if modality == "spatial":
-                        from transcribe.evaluation.evaluator import fetch_spatial_toy_dataset
+                        from transcribe.evaluation.datasets import fetch_spatial_toy_dataset
                         adata, c_col, t_col = fetch_spatial_toy_dataset()
                     else:
                         adata, c_col, t_col = fetch_toy_dataset()

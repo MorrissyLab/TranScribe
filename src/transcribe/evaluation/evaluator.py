@@ -10,41 +10,13 @@ from transcribe.workflow.graph import build_workflow
 from transcribe.agents.delta_evaluator import create_delta_agent
 from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile
 from sklearn.metrics import accuracy_score
-import matplotlib.pyplot as plt
-import seaborn as sns
 from transcribe.config import logger, DEFAULT_MODEL_NAME
 
-def fetch_toy_dataset():
-    """Fetches the Scanpy PBMC3k processed toy dataset for evaluation."""
-    logger.info("Fetching PBMC3k processed toy dataset from Scanpy...")
-    try:
-         adata = sc.datasets.pbmc3k_processed()
-         # Hide ground truth from the LLM by creating numeric cluster IDs
-         adata.obs['blind_cluster'] = adata.obs['louvain'].cat.codes.astype(str).astype('category')
-    except Exception as e:
-         logger.error(f"Failed to fetch pbmc3k from scanpy datasets: {e}")
-         raise
-    return adata, "blind_cluster", "louvain"
+# Import factored out modules
+from transcribe.evaluation.datasets import fetch_toy_dataset, fetch_spatial_toy_dataset
+from transcribe.evaluation.plotting import plot_evaluation_results
 
-def fetch_spatial_toy_dataset():
-    """Fetches the Squidpy Visium H&E toy dataset for spatial evaluation."""
-    logger.info("Fetching Visium H&E toy dataset from Squidpy...")
-    try:
-         import squidpy as sq
-         adata = sq.datasets.visium_hne_adata()
-         # The ground truth is 'cluster'
-         adata.obs['blind_cluster'] = adata.obs['cluster'].cat.codes.astype(str).astype('category')
-         # Pre-compute spatial neighbors for Agent Beta
-         sq.gr.spatial_neighbors(adata)
-    except ImportError:
-         logger.error("Squidpy is required for the spatial toy dataset. Install it with `pip install squidpy`.")
-         raise
-    except Exception as e:
-         logger.error(f"Failed to fetch visium dataset from squidpy: {e}")
-         raise
-    return adata, "blind_cluster", "cluster"
-
-def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
+def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
@@ -88,7 +60,6 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
 
     # Track metadata
     is_toy = "toy" in data_path.lower() or dataset_name.lower().endswith("toy")
-    
     logger.info(f"{'Evaluating' if is_eval else 'Annotating'} {len(clusters)} clusters for {dataset_name}...")
     
     # Map cluster ID to true label (majority vote or direct mapping)
@@ -115,12 +86,11 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
     metadata = {"organism": organism, "tissue_type": tissue, "disease": disease}
     
     from transcribe.core.llm_factory import LLMFactory
-    from transcribe.core.schema import FinalAnnotation
     from transcribe.tools.scanpy_utils import build_nichecard
     import json as json_builtin
     
     for cluster_id in clusters:
-        # Rate limit protection for Gemini/Gemma Free Tier (15 RPM)
+        # Rate limit protection
         time.sleep(2)
         cid_str = str(cluster_id)
         logger.info(f"{'Evaluating' if is_eval else 'Annotating'} cluster {cid_str}" + (f" (Truth: {true_labels[cid_str]})" if is_eval else ""))
@@ -166,24 +136,21 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
                 ann = candidate_anns[0]
                 final_state = final_states[0]
             elif len(candidate_anns) > 1:
-                # Prompt the ontologist/LLM to select the best one
                 llm = LLMFactory.get_provider(provider).get_llm(model_name, temperature=0.1)
-                sys_msg = "You are an expert Ontologist. You are given several candidate cell type annotations for a cell cluster. Select the best one."
-                usr_msg = f"Tissue: {tissue}\\nDisease: {disease}\\n\\nCandidates:\\n"
+                sys_msg = "You are an expert Ontologist. You are given several candidate cell type annotations. Select the best one."
+                usr_msg = f"Tissue: {tissue}\nDisease: {disease}\n\nCandidates:\n"
                 for idx, c in enumerate(candidate_anns):
-                    usr_msg += f"[{idx+1}] Cell Type: {c.cell_type}\\nConfidence: {c.confidence}\\nReasoning: {c.reasoning_chain}\\n\\n"
+                    usr_msg += f"[{idx+1}] Cell Type: {c.cell_type}\nConfidence: {c.confidence}\nReasoning: {c.reasoning_chain}\n\n"
                 usr_msg += "Respond ONLY with the EXACT 'Cell Type' string of the best candidate from the list above. Do not include any other text."
                 
                 try:
                     from langchain_core.messages import SystemMessage, HumanMessage
-                    # For Gemma models, merge system+user into a single HumanMessage
                     if "gemma" in model_name.lower():
                         combined_msg = HumanMessage(content=f"{sys_msg}\n\n{usr_msg}")
                         resp = llm.invoke([combined_msg])
                     else:
                         resp = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=usr_msg)])
                     best_cell_type = resp.content.strip()
-                    # Find the candidate matching the selected cell type
                     ann = next((c for c in candidate_anns if c.cell_type.lower() == best_cell_type.lower()), candidate_anns[-1])
                     final_state = next((s for s, c in zip(final_states, candidate_anns) if c == ann), final_states[-1])
                 except Exception as e:
@@ -208,14 +175,14 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
             logger.error(f"Error evaluating cluster {cid_str}: {e}")
             predictions[cid_str] = "Error"
             
-    # Calculate naive metrics (if is_eval)
+    # Calculate naive metrics
     y_true = []
     y_pred = []
     if is_eval:
         y_true = [true_labels[str(c)] for c in clusters]
         y_pred = [predictions[str(c)] for c in clusters]
     
-    # Agent Delta Evaluation (Biological Consistency)
+    # Agent Delta Evaluation
     eval_matches = []
     if is_eval:
         logger.info("Running Agent Delta (Evaluator) for biological reconciliation...")
@@ -242,7 +209,6 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
                 delta_results[cid_str] = {"is_match": False, "explanation": f"Evaluator Error: {e}"}
                 eval_matches.append(False)
 
-    # Metrics calculation
     acc = 0.0
     eval_acc = 0.0
     if is_eval:
@@ -251,7 +217,6 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
         logger.info(f"Naive Accuracy Score (Exact Match): {acc:.2f}")
         logger.info(f"Evaluator Accuracy Score (Biological Match): {eval_acc:.2f}")
     
-    # Save results
     end_ts = time.time()
     end_time_iso = datetime.now().isoformat()
     duration = end_ts - start_ts
@@ -279,10 +244,7 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
             "num_tries": num_tries,
             "modality": modality
         },
-        "metrics": {
-            "accuracy": float(acc),
-            "evaluator_accuracy": float(eval_acc)
-        },
+        "metrics": {"accuracy": float(acc), "evaluator_accuracy": float(eval_acc)},
         "cluster_mapping": cluster_mapping,
         "cluster_degs": cluster_degs,
         "raw_results": raw_results,
@@ -292,103 +254,26 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
 
     with open(dataset_out_dir / "eval_report.json", "w") as f:
         json.dump(eval_data, f, indent=4)
-        
     with open(dataset_out_dir / "eval_communication_trace.json", "w") as f:
         json.dump(traces, f, indent=4)
         
-    # Generate Plot corresponding to Prediction
-    if modality == "factorized":
-        if adata is not None:
-            try:
-                for cid_str in clusters:
-                    logger.info(f"Generating plot for factor {cid_str}...")
-                    score_col = f"Factor_{cid_str}"
-                    top_genes = cluster_degs.get(cid_str, [])
-                    valid_genes = [g for g in top_genes if g in adata.var_names]
-                    if valid_genes:
-                        if hasattr(adata.X, "toarray"):
-                             adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1).A1
-                        else:
-                             adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1)
-                        
-                        if factorized_type == "spatial":
-                            import squidpy as sq
-                            try:
-                                lib_id = list(adata.uns['spatial'].keys())[0]
-                            except Exception:
-                                lib_id = None
-                            fig, ax = plt.subplots()
-                            sq.pl.spatial_scatter(adata, color=score_col, shape=None, ax=ax, library_id=lib_id, legend_loc=None)
-                            plot_filename = f"spatial_factor_{cid_str}.png"
-                        else:
-                            sc.pl.umap(adata, color=score_col, show=False)
-                            plot_filename = f"umap_factor_{cid_str}.png"
-                        
-                        plt.title(f"{actual_run_name} - {cid_str} ({predictions.get(cid_str,'')})")
-                        plt.tight_layout()
-                        plt.savefig(f"{dataset_out_dir}/{plot_filename}", bbox_inches="tight")
-                        plt.close()
-            except Exception as e:
-                logger.warning(f"Failed to generate factor visualizations: {e}")
-        else:
-            logger.info("Skipping visualizations for factorized mode because raw_data_path/adata was not provided.")
-    else:
-        try:
-            logger.info(f"Generating {'Spatial Plot' if modality == 'spatial' else 'UMAP'}...")
-            import distinctipy
-            # We want each cluster to have a unique distinct color
-            adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
-            categories = adata.obs[cluster_col].cat.categories
-            colors = distinctipy.get_colors(len(categories), rng=42)
-            hex_colors = [distinctipy.get_hex(c) for c in colors]
-            adata.uns[f'{cluster_col}_colors'] = hex_colors
-            
-            if modality == "spatial":
-                import squidpy as sq
-                # We must specify library_id to avoid warnings if not set, or just let Squidpy find it
-                try:
-                    lib_id = list(adata.uns['spatial'].keys())[0]
-                except Exception:
-                    lib_id = None
-                    
-                fig, ax = plt.subplots()
-                sq.pl.spatial_scatter(adata, color=cluster_col, shape=None, ax=ax, library_id=lib_id, legend_loc=None)
-                plot_filename = "spatial_predicted.png"
-            else:
-                sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
-                plot_filename = "umap_predicted.png"
-            
-            # Map back to cluster IDs for the JSON report
-            label_to_color = dict(zip(categories, hex_colors))
-            for c in clusters:
-                if str(c) in label_to_color:
-                    cluster_colors[str(c)] = label_to_color[str(c)]
-                        
-            # Re-save JSON with colors updated
-            eval_data["cluster_colors"] = cluster_colors
-            with open(dataset_out_dir / "eval_report.json", "w") as f:
-                json.dump(eval_data, f, indent=4)
-                
-            plt.title(actual_run_name)
-            plt.tight_layout()
-            plt.savefig(f"{dataset_out_dir}/{plot_filename}", bbox_inches="tight")
-            plt.close()
-        except Exception as e:
-            logger.warning(f"Failed to generate UMAPs: {e}")
-        
-    # Quick Plot (if is_eval)
-    if is_eval:
-        logger.info("Generating match count plot...")
-        df = pd.DataFrame({"Cluster": [str(c) for c in clusters], "True_Label": y_true, "Predicted": y_pred})
-        df['Exact_Match'] = df['True_Label'] == df['Predicted']
-        
-        plt.figure()
-        sns.countplot(data=df, x='Exact_Match')
-        plt.title(f"Annotation Exact Matches (Acc: {acc:.2f})")
-        plt.savefig(f"{dataset_out_dir}/match_plot.png")
-        plt.close()
-    else:
-        df = pd.DataFrame({"Cluster": [str(c) for c in clusters], "Predicted": [predictions.get(str(c), "Unknown") for c in clusters]})
+    # Generate Plots from separated module
+    df_results = plot_evaluation_results(
+        modality=modality,
+        adata=adata,
+        clusters=clusters,
+        cluster_degs=cluster_degs,
+        predictions=predictions,
+        factorized_type=factorized_type,
+        actual_run_name=actual_run_name,
+        dataset_out_dir=dataset_out_dir,
+        cluster_col=cluster_col,
+        eval_data=eval_data,
+        is_eval=is_eval,
+        y_true=y_true,
+        y_pred=y_pred,
+        acc=acc
+    )
     
     # Generate interactive HTML report
     try:
@@ -397,7 +282,7 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
     except Exception as e:
         logger.error(f"Failed to generate HTML report: {e}")
     
-    return acc, df
+    return acc, df_results
 
 def run_toy_evaluation():
     logger.info("Starting Toy Evaluation Pipeline.")
