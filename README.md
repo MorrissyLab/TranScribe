@@ -8,6 +8,7 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 
 - **Tri-Agent Framework**: Alpha (Molecular Profiler), Beta (Spatial Analyst), and Gamma (Ontologist) work in concert.
 - **Factorized Data Support**: Annotate latent factors from NMF, cNMF, or other matrix decomposition methods.
+- **Batch Factorized Processing**: Automatically discover and annotate all factorization ranks in a directory, outputting to a single tabbed HTML report.
 - **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode, providing Agent Alpha with deep functional context beyond raw gene weights.
 - **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
@@ -119,16 +120,16 @@ Configs are stored in the `configs/` directory. Define your models, datasets, an
 
 ```bash
 # Run multi-model evaluation benchmark
-python -m transcribe.cli --config configs/eval_single_cell_config.yaml
+uv run python -m transcribe.cli --config configs/eval_single_cell_config.yaml
 
 # Run spatial transcriptomics evaluation (Visium)
-python -m transcribe.cli --config configs/eval_spatial_config.yaml
+uv run python -m transcribe.cli --config configs/eval_spatial_config.yaml
 
 # Run factorized data evaluation (cNMF/spOT-NMF)
-python -m transcribe.cli --config configs/eval_factorized_config.yaml
+uv run python -m transcribe.cli --config configs/eval_factorized_config.yaml
 
 # Run multi-model inference annotation
-python -m transcribe.cli --config configs/infer_single_cell_config.yaml
+uv run python -m transcribe.cli --config configs/infer_single_cell_config.yaml
 ```
 
 ### Option B: Single-File Inference
@@ -136,10 +137,17 @@ For quick annotation of a single `.h5ad` file:
 
 ```bash
 # Single-cell RNA-seq
-python -m transcribe.cli --data_path data/pbmc3k.h5ad --cluster_col leiden
+uv run python -m transcribe.cli --data_path data/pbmc3k.h5ad --cluster_col leiden
 
 # Spatial transcriptomics (automatic detection)
-python -m transcribe.cli --data_path data/spatial.h5ad --cluster_col clusters --modality spatial
+uv run python -m transcribe.cli --data_path data/spatial.h5ad --cluster_col clusters --modality spatial
+```
+
+### Option C: Batch Factorized Inference
+To annotate all factorization ranks in a given directory natively (e.g., `k_5` to `k_70` from cNMF):
+
+```bash
+uv run python -m transcribe.cli configs/batch_factorized_config.yaml
 ```
 
 ## 📂 Project Structure
