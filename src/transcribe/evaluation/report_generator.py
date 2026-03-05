@@ -313,6 +313,10 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
     truth_th  = "<th>Ground Truth</th>" if is_eval else ""
     thead     = f"<tr>{status_th}<th>C</th>{truth_th}<th>Predicted</th><th>Conf.</th><th>Top DEGs</th><th>Actions</th></tr>"
 
+    grid_class = "experiment-grid" if plot_html else ""
+    left_div = f'<div class="experiment-left">{plot_html}</div>' if plot_html else ""
+    right_class = "experiment-right" if plot_html else "experiment-full"
+
     return f"""
     <div id="tab_exp_{run_id}" class="tab-pane">
         <div style="text-align:center;margin-bottom:22px">
@@ -328,11 +332,9 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
             <div class="stat-tile" style="display:flex;flex-direction:column;gap:6px;align-items:center">{acc_html}</div>
         </div>
 
-        <div class="experiment-grid">
-            <div class="experiment-left">
-                {plot_html}
-            </div>
-            <div class="experiment-right">
+        <div class="{grid_class}">
+            {left_div}
+            <div class="{right_class}">
                 <div class="view-toggle-row">
                     <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
                     <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>

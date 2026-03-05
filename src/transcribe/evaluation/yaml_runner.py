@@ -6,6 +6,78 @@ import pandas as pd
 from transcribe.evaluation.evaluator import evaluate_dataset
 from transcribe.evaluation.datasets import fetch_toy_dataset
 from transcribe.tools.factor_utils import load_factorized_data
+import re
+
+def expand_batch_datasets(datasets: list) -> list:
+    """Expands batch dataset definitions into individual datasets per rank."""
+    expanded = []
+    for ds in datasets:
+        if ds.get("modality") == "factorized" and "directory" in ds and "sample_name" in ds:
+            directory = Path(ds["directory"])
+            sample_name = ds["sample_name"]
+            
+            if not directory.exists():
+                logger.warning(f"Batch directory not found: {directory}")
+                continue
+                
+            rank_pattern = re.compile(rf"{re.escape(sample_name)}\.gene_spectra_score\.k_(\d+)\.")
+            
+            found_ranks = []
+            for file_path in directory.iterdir():
+                if file_path.is_file():
+                    match = rank_pattern.match(file_path.name)
+                    if match:
+                        found_ranks.append(int(match.group(1)))
+            
+            if not found_ranks:
+                logger.warning(f"No rank files found matching {sample_name}.gene_spectra_score.k_*.txt in {directory}")
+                continue
+                
+            found_ranks.sort()
+            logger.info(f"Found {len(found_ranks)} ranks for {sample_name}: {found_ranks}")
+            
+            for rank in found_ranks:
+                new_ds = ds.copy()
+                new_ds["name"] = f"{ds.get('name', sample_name)}_k{rank}"
+                # Construct path
+                # moh_sarcoma_cnmf.gene_spectra_score.k_35.dt_0_1.txt
+                # Need to find the exact file name because dt_0_1 might be dynamic.
+                # Just find the file that matches the pattern again
+                path_str = None
+                for fn in directory.iterdir():
+                    if fn.is_file():
+                        m = rank_pattern.match(fn.name)
+                        if m and int(m.group(1)) == rank:
+                            path_str = str(fn)
+                            break
+                            
+                if not path_str:
+                    continue
+                    
+                new_ds["path"] = path_str
+                
+                # Construct usage path
+                # moh_sarcoma_cnmf.usages.k_35.dt_0_1.consensus.txt
+                usage_pattern = re.compile(rf"{re.escape(sample_name)}\.usages\.k_{rank}\.")
+                usage_str = None
+                for fn in directory.iterdir():
+                    if fn.is_file():
+                        if usage_pattern.match(fn.name):
+                            usage_str = str(fn)
+                            break
+                            
+                if usage_str:
+                    new_ds["usage"] = usage_str
+                    
+                # Clean up batch keys
+                new_ds.pop("directory", None)
+                new_ds.pop("sample_name", None)
+                
+                expanded.append(new_ds)
+        else:
+            expanded.append(ds)
+            
+    return expanded
 
 def run_yaml_eval(config_path: str):
     import sys
@@ -40,6 +112,11 @@ def run_yaml_eval(config_path: str):
     datasets = config.get("datasets", [])
     if not datasets:
         logger.warning("No datasets specified in YAML.")
+        return
+        
+    datasets = expand_batch_datasets(datasets)
+    if not datasets:
+        logger.warning("No datasets to process after evaluating batch configurations.")
         return
         
     default_output = "results/infer_results" if is_infer else "results/eval_results"

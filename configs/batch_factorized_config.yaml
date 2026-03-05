@@ -1,0 +1,21 @@
+# TranScribe Batch Factorized Inference Configuration
+
+mode: "infer"
+provider: "gemini"
+output: "results/batch_infer_results"
+num_tries: 1
+
+models:
+  - "gemma-3-27b-it"
+
+datasets:
+  - name: "Sarcoma_cNMF"
+    directory: "Z:\\University of Calgary\\Morrissy Lab - Documents\\MOH_MultiOmics\\cnmf_analysis\\cNMF_results"
+    sample_name: "moh_sarcoma_cnmf"
+    modality: "factorized"
+    factorized_type: "sc"
+    organism: "Human"
+    tissue: "Sarcoma"
+    disease: "Cancer"
+    # To overlay factors on raw spatial/sc data, provide the h5ad path here:
+    raw_data_path: "Z:\\University of Calgary\\Morrissy Lab - Documents\\MOH_MultiOmics\\cnmf_analysis\\cNMF_results\\moh_sarcoma_cnmf.h5ad"
