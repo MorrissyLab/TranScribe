@@ -217,14 +217,16 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
 
     # Plot
     plot_html = ""
-    is_spatial = meta.get("modality") == "spatial"
+    is_factorized = meta.get("modality") == "factorized"
+    is_spatial = meta.get("modality") == "spatial" or (is_factorized and meta.get("factorized_type") == "spatial")
     
-    # If spatial, prioritize spatial_path. Otherwise use umap_path.
-    plot_path = ds.get("spatial_path") if is_spatial else ds.get("umap_path")
-    plot_label = "Spatial Plot" if is_spatial else "Annotated UMAP"
-    
-    if plot_path:
-        plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
+    # Global plot if not factorized
+    if not is_factorized:
+        plot_path = ds.get("spatial_path") if is_spatial else ds.get("umap_path")
+        plot_label = "Spatial Plot" if is_spatial else "Annotated UMAP"
+        
+        if plot_path:
+            plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
 
     # Cluster rows + cards
     tbl_rows  = ""
@@ -282,8 +284,14 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
         emo        = ("✅ " if is_match else "❌ ") if is_eval else ""
         truth_tag  = f'<div class="tag tag-true"><span>True:</span><span>{true_lbl}</span></div>' if is_eval else ""
 
+        factor_img_html = ""
+        if is_factorized:
+            f_img = ds.get("run_id","") + f"/plots/factor_{cid}_usage.png"
+            factor_img_html = f'<div style="text-align:center;margin-bottom:10px;"><img src="{f_img}" alt="Factor {cid} Usage Plot" style="max-width:100%;border-radius:6px;border:1px solid var(--border);"></div>'
+
         card_html += f"""
             <div class="cluster-card">
+                {factor_img_html}
                 <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:9px">
                     <span style="font-size:1.05rem;font-weight:800;color:#fff">{emo}Cluster {cid}</span>
                     <span>{conf_badge}</span>

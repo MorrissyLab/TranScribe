@@ -19,7 +19,7 @@ from transcribe.evaluation.plotting import plot_evaluation_results
 from transcribe.anntools.marker_overlap import compute_genesets_annotation
 from transcribe.anntools.pathway_enrichment import run_topics_pathway_enrichment
 
-def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
+def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
@@ -50,6 +50,21 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
         if raw_data_path and os.path.exists(raw_data_path):
              logger.info(f"Loading raw data for factorized visualization from {raw_data_path}")
              adata = sc.read_h5ad(raw_data_path)
+             if factorized_type == "sc" and "X_umap" not in adata.obsm:
+                 if "X_umap" in adata.obsm:
+                     logger.info("Raw data missing X_umap, but found X_umap. Using it as X_umap.")
+                     adata.obsm["X_umap"] = adata.obsm["X_umap"]
+                 elif "X_umap.rna" in adata.obsm:
+                     logger.info("Raw data missing X_umap, but found X_umap.rna. Using it as X_umap.")
+                     adata.obsm["X_umap"] = adata.obsm["X_umap.rna"]
+                 elif "X_umap.atac" in adata.obsm:
+                     logger.info("Raw data missing X_umap, but found X_umap.atac. Using it as X_umap.")
+                     adata.obsm["X_umap"] = adata.obsm["X_umap.atac"]
+                 else:
+                     logger.info("Raw data missing X_umap. Computing UMAP coordinates...")
+                     sc.pp.pca(adata)
+                     sc.pp.neighbors(adata)
+                     sc.tl.umap(adata)
     else:
         if adata is None:
              raise ValueError("adata must be provided for non-factorized modality")
@@ -181,22 +196,7 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
                 if marker_overlap_df is not None and cid_str in marker_overlap_df.columns:
                     top_markers = marker_overlap_df[cid_str].sort_values(ascending=False).head(3).to_dict()
                     state_input["marker_overlap"] = top_markers
-#                if pathway_enrichment_df is not None and cid_str in pathway_enrichment_df.columns:
-#                    # Pathway enrichment CSV stores string representations, we will parse them back or just pass as strings
-#                    # Since schema expects Dict[str, float] for pathway_enrichment, and the CSV has format "term:score:name"
-#                    # let's extract it
-#                    top_pathways = {}
-#                    pathway_strings = pathway_enrichment_df[cid_str].dropna().head(10).tolist()
-#                    for p_str in pathway_strings:
-#                        try:
-#                            # format is usually ID:score:Name
-#                            parts = p_str.split(":", 2)
-#                            if len(parts) >= 2:
-#                                top_pathways[parts[0] + " " + (parts[2] if len(parts)>2 else "")] = float(parts[1])
-#                        except Exception:
-#                            pass
-#                    if top_pathways:
-#                        state_input["pathway_enrichment"] = top_pathways
+
             candidate_anns = []
             final_states = []
             
@@ -322,7 +322,8 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
             "tissue": tissue,
             "disease": disease,
             "num_tries": num_tries,
-            "modality": modality
+            "modality": modality,
+            "factorized_type": factorized_type
         },
         "metrics": {"accuracy": float(acc), "evaluator_accuracy": float(eval_acc)},
         "cluster_mapping": cluster_mapping,
@@ -352,7 +353,8 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
         is_eval=is_eval,
         y_true=y_true,
         y_pred=y_pred,
-        acc=acc
+        acc=acc,
+        usage_df=usage_df
     )
     
     # Generate interactive HTML report
@@ -366,6 +368,7 @@ def evaluate_dataset(adata=None, factorized_df=None, raw_data_path: str = None, 
 
 def run_toy_evaluation():
     logger.info("Starting Toy Evaluation Pipeline.")
+    from transcribe.evaluation.datasets import fetch_toy_dataset
     adata, cluster_col, truth_col = fetch_toy_dataset()
     evaluate_dataset(adata, cluster_col=cluster_col, ground_truth_col=truth_col, dataset_name="PBMC3kToy")
     

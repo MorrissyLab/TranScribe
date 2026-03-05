@@ -20,7 +20,8 @@ def plot_evaluation_results(
     is_eval,
     y_true,
     y_pred,
-    acc
+    acc,
+    usage_df=None
 ):
     """
     Generates appropriate visualization plots for the evaluation run based on the modality.
@@ -32,34 +33,55 @@ def plot_evaluation_results(
     if modality == "factorized":
         if adata is not None:
             try:
+                import os
+                plots_dir = dataset_out_dir / "plots"
+                os.makedirs(plots_dir, exist_ok=True)
+                
                 for cid_str in clusters:
                     logger.info(f"Generating plot for factor {cid_str}...")
                     score_col = f"Factor_{cid_str}"
-                    top_genes = cluster_degs.get(cid_str, [])
-                    valid_genes = [g for g in top_genes if g in adata.var_names]
-                    if valid_genes:
-                        if hasattr(adata.X, "toarray"):
-                             adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1).A1
-                        else:
-                             adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1)
+                    
+                    if usage_df is not None and cid_str in usage_df.index:
+                        # Use exact usage weights
+                        weights = usage_df.loc[cid_str]
+                        # Match usage cells/spots index to adata.obs index
+                        common_cells = weights.index.intersection(adata.obs_names)
+                        adata.obs[score_col] = 0.0
                         
-                        if factorized_type == "spatial":
-                            import squidpy as sq
-                            try:
-                                lib_id = list(adata.uns['spatial'].keys())[0]
-                            except Exception:
-                                lib_id = None
-                            fig, ax = plt.subplots()
-                            sq.pl.spatial_scatter(adata, color=score_col, shape=None, ax=ax, library_id=lib_id, legend_loc=None)
-                            plot_filename = f"spatial_factor_{cid_str}.png"
+                        if len(common_cells) > 0:
+                            adata.obs.loc[common_cells, score_col] = weights.loc[common_cells].values
                         else:
-                            sc.pl.umap(adata, color=score_col, show=False)
-                            plot_filename = f"umap_factor_{cid_str}.png"
-                        
-                        plt.title(f"{actual_run_name} - {cid_str} ({predictions.get(cid_str,'')})")
-                        plt.tight_layout()
-                        plt.savefig(f"{dataset_out_dir}/{plot_filename}", bbox_inches="tight")
-                        plt.close()
+                            logger.warning(f"No matching cells/spots between usage and adata for factor {cid_str}")
+                    else:
+                        # Fallback to mean of top DEGs
+                        top_genes = cluster_degs.get(cid_str, [])
+                        valid_genes = [g for g in top_genes if g in adata.var_names]
+                        if valid_genes:
+                            if hasattr(adata.X, "toarray"):
+                                 adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1).A1
+                            else:
+                                 adata.obs[score_col] = adata[:, valid_genes].X.mean(axis=1)
+                        else:
+                            logger.warning(f"No valid genes to compute score for factor {cid_str}")
+                            continue
+
+                    if factorized_type == "spatial":
+                        import squidpy as sq
+                        try:
+                            lib_id = list(adata.uns['spatial'].keys())[0]
+                        except Exception:
+                            lib_id = None
+                        fig, ax = plt.subplots()
+                        sc.pl.spatial(adata, color=score_col, ax=ax, library_id=lib_id, show=False)
+                        plot_filename = f"factor_{cid_str}_usage.png"
+                    else:
+                        sc.pl.umap(adata, color=score_col, show=False)
+                        plot_filename = f"factor_{cid_str}_usage.png"
+                    
+                    plt.title(f"{actual_run_name} - {cid_str} ({predictions.get(cid_str,'')})")
+                    plt.tight_layout()
+                    plt.savefig(f"{plots_dir}/{plot_filename}", bbox_inches="tight")
+                    plt.close()
             except Exception as e:
                 logger.warning(f"Failed to generate factor visualizations: {e}")
         else:

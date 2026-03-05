@@ -70,6 +70,7 @@ def run_yaml_eval(config_path: str):
                     cluster_col = ds.get("cluster_col", c_col)
                     truth_col = None if is_infer else ds.get("ground_truth_col", t_col)
                     factorized_df = None
+                    usage_df = None
                     raw_data_path = None
                     factorized_type = "sc"
                 else:
@@ -79,10 +80,22 @@ def run_yaml_eval(config_path: str):
                         cluster_col = ds.get("cluster_col", "factor")
                         truth_col = None if is_infer else ds.get("ground_truth_path", None)
                         raw_data_path = ds.get("raw_data_path", None)
+                        
+                        usage_path = ds.get("usage", None)
+                        if usage_path:
+                            try:
+                                usage_df = pd.read_csv(usage_path, sep="\t", index_col=0)
+                            except Exception as e:
+                                logger.warning(f"Failed to load usage data from {usage_path}: {e}")
+                                usage_df = None
+                        else:
+                            usage_df = None
+                            
                         factorized_type = ds.get("factorized_type", "sc")
                     else:
                         adata = sc.read_h5ad(data_path)
                         factorized_df = None
+                        usage_df = None
                         cluster_col = ds.get("cluster_col", "leiden")
                         truth_col = None if is_infer else ds.get("ground_truth_col", None)
                         raw_data_path = None
@@ -91,6 +104,7 @@ def run_yaml_eval(config_path: str):
                 evaluate_dataset(
                     adata=adata,
                     factorized_df=factorized_df,
+                    usage_df=usage_df,
                     raw_data_path=raw_data_path,
                     data_path=data_path,
                     cluster_col=cluster_col,
