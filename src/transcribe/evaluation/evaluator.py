@@ -68,13 +68,8 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     else:
         if adata is None:
              raise ValueError("adata must be provided for non-factorized modality")
-        if cluster_col not in adata.obs:
-             raise ValueError(f"Cluster column '{cluster_col}' missing in adata.obs")
-        if ground_truth_col and ground_truth_col in adata.obs:
-             is_eval = True
-        if is_eval and ground_truth_col not in adata.obs:
-             raise ValueError(f"Ground truth column '{ground_truth_col}' missing in adata.obs")
-        clusters = adata.obs[cluster_col].unique()
+        adata.obs[cluster_col] = adata.obs[cluster_col].astype(str)
+        clusters = sorted(adata.obs[cluster_col].unique())
 
     # Track metadata
     is_toy = "toy" in data_path.lower() or dataset_name.lower().endswith("toy")

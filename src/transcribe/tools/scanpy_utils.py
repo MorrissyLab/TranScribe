@@ -2,9 +2,14 @@ import scanpy as sc
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
+from transcribe.config import logger
 
 def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) -> List[str]:
     """Retrieve top differentially expressed genes for a specific cluster."""
+    # Ensure cluster_col is categorical for scanpy
+    if not isinstance(adata.obs[cluster_col].dtype, pd.CategoricalDtype):
+        adata.obs[cluster_col] = adata.obs[cluster_col].astype(str).astype('category')
+
     compute_degs = True
     if 'rank_genes_groups' in adata.uns:
         params = adata.uns['rank_genes_groups'].get('params', {})
@@ -12,17 +17,25 @@ def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) 
             compute_degs = False
             
     if compute_degs:
-        # Precompute DEG if not already done. 
-        # For production, log1p normalized data should be used.
-        sc.tl.rank_genes_groups(adata, cluster_col, method='t-test')
+        try:
+            # Precompute DEG if not already done.
+            sc.tl.rank_genes_groups(adata, cluster_col, method='t-test')
+        except Exception as e:
+            logger.error(f"Failed to compute DEGs via sc.tl.rank_genes_groups: {e}")
+            return []
     
-    # scanpy stores results in adata.uns['rank_genes_groups']
+    if 'rank_genes_groups' not in adata.uns or 'names' not in adata.uns['rank_genes_groups']:
+        logger.error(f"DEGs not found in adata.uns['rank_genes_groups'] for {cluster_col}")
+        return []
+
     names = adata.uns['rank_genes_groups']['names']
     
-    if cluster_id not in names.dtype.names:
-        raise ValueError(f"Cluster ID {cluster_id} not found in the DEGs for column {cluster_col}.")
+    cid_str = str(cluster_id)
+    if cid_str not in names.dtype.names:
+        logger.warning(f"Cluster ID {cid_str} not found in the DEGs for column {cluster_col}.")
+        return []
 
-    return names[cluster_id][:top_n].tolist()
+    return names[cid_str][:top_n].tolist()
 
 def get_expression_profile(adata, cluster_col: str, cluster_id: str, genes: List[str]) -> Dict[str, float]:
     """Retrieve the mean expression of specific genes for a given cluster."""

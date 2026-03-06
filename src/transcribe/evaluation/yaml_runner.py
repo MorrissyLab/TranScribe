@@ -9,11 +9,15 @@ from transcribe.tools.factor_utils import load_factorized_data
 import re
 
 def expand_batch_datasets(datasets: list) -> list:
-    """Expands batch dataset definitions into individual datasets per rank."""
+    """Expands batch dataset definitions into individual datasets per rank or per file."""
     expanded = []
     for ds in datasets:
-        if ds.get("modality") == "factorized" and "directory" in ds and "sample_name" in ds:
-            directory = Path(ds["directory"])
+        modality = ds.get("modality", "single-cell")
+        directory_path = ds.get("directory")
+        
+        if directory_path and modality == "factorized" and "sample_name" in ds:
+            # Existing factorized batch logic
+            directory = Path(directory_path)
             sample_name = ds["sample_name"]
             
             if not directory.exists():
@@ -39,10 +43,6 @@ def expand_batch_datasets(datasets: list) -> list:
             for rank in found_ranks:
                 new_ds = ds.copy()
                 new_ds["name"] = f"{ds.get('name', sample_name)}_k{rank}"
-                # Construct path
-                # moh_sarcoma_cnmf.gene_spectra_score.k_35.dt_0_1.txt
-                # Need to find the exact file name because dt_0_1 might be dynamic.
-                # Just find the file that matches the pattern again
                 path_str = None
                 for fn in directory.iterdir():
                     if fn.is_file():
@@ -50,14 +50,9 @@ def expand_batch_datasets(datasets: list) -> list:
                         if m and int(m.group(1)) == rank:
                             path_str = str(fn)
                             break
-                            
-                if not path_str:
-                    continue
-                    
+                if not path_str: continue
                 new_ds["path"] = path_str
                 
-                # Construct usage path
-                # moh_sarcoma_cnmf.usages.k_35.dt_0_1.consensus.txt
                 usage_pattern = re.compile(rf"{re.escape(sample_name)}\.usages\.k_{rank}\.")
                 usage_str = None
                 for fn in directory.iterdir():
@@ -65,14 +60,33 @@ def expand_batch_datasets(datasets: list) -> list:
                         if usage_pattern.match(fn.name):
                             usage_str = str(fn)
                             break
-                            
                 if usage_str:
                     new_ds["usage"] = usage_str
                     
-                # Clean up batch keys
                 new_ds.pop("directory", None)
                 new_ds.pop("sample_name", None)
+                expanded.append(new_ds)
+
+        elif directory_path and modality == "single-cell":
+            # New single-cell batch logic
+            directory = Path(directory_path)
+            if not directory.exists():
+                logger.warning(f"Batch directory not found: {directory}")
+                continue
+            
+            found_files = sorted([f for f in directory.iterdir() if f.is_file() and f.suffix == ".h5ad"])
+            
+            if not found_files:
+                logger.warning(f"No .h5ad files found in {directory}")
+                continue
                 
+            logger.info(f"Found {len(found_files)} .h5ad files in {directory}")
+            
+            for file_path in found_files:
+                new_ds = ds.copy()
+                new_ds["name"] = f"{ds.get('name', 'SC')}_{file_path.stem}"
+                new_ds["path"] = str(file_path)
+                new_ds.pop("directory", None)
                 expanded.append(new_ds)
         else:
             expanded.append(ds)
