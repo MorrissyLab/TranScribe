@@ -64,7 +64,7 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
         return {"beta_feedback": result, "messages": messages}
 
     def run_gamma(state: AgentState):
-        logger.info(f"Running Gamma on Cluster {state['cluster_id']}...")
+        logger.debug(f"Running Gamma on Cluster {state['cluster_id']}...")
         beta_feedback = state.get("beta_feedback", "None")
         metadata = state.get("metadata", {})
         

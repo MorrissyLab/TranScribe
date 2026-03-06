@@ -5,8 +5,8 @@ from typing import List, Dict, Tuple
 from transcribe.config import logger
 
 
-def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) -> List[str]:
-    """Retrieve top differentially expressed genes, mapping indices to symbols if needed."""
+def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str]]:
+    """Compute DEGs once for all clusters and return a mapping of {cluster_id: [genes]}."""
     
     # 1. Ensure cluster column is categorical
     if not isinstance(adata.obs[cluster_col].dtype, pd.CategoricalDtype):
@@ -18,8 +18,9 @@ def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) 
         params = adata.uns['rank_genes_groups'].get('params', {})
         if params.get('groupby') == cluster_col:
             compute_degs = False
-            
+    
     if compute_degs:
+        logger.debug(f"Computing DEGs for {cluster_col}...")
         import warnings
         try:
             with warnings.catch_warnings():
@@ -28,30 +29,54 @@ def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) 
                 sc.tl.rank_genes_groups(adata, cluster_col, method='t-test', use_raw=True)
         except Exception as e:
             logger.error(f"Failed to compute DEGs: {e}")
-            return []
+            return {}
 
-    # 3. Extract names for the cluster
-    try:
-        cid_str = str(cluster_id)
-        df = sc.get.rank_genes_groups_df(adata, group=cid_str)
+    # 3. Extract all groups
+    results = {}
+    groups = adata.uns['rank_genes_groups']['names'].dtype.names
+    
+    # Check if indices are numeric (indices vs symbols)
+    # We check the first cluster's first few genes
+    sample_genes = adata.uns['rank_genes_groups']['names'][0]
+    is_numeric = False
+    if len(sample_genes) > 0:
+        # Check first 5 genes of the first cluster
+        first_group = groups[0]
+        check_genes = [str(adata.uns['rank_genes_groups']['names'][i][first_group]) for i in range(min(5, len(adata.uns['rank_genes_groups']['names'])))]
+        if all(g.isdigit() for g in check_genes):
+            is_numeric = True
+            logger.debug(f"DEGs for {cluster_col} appear to be numeric indices. Mapping to gene symbols...")
+
+    for group in groups:
+        # get_rank_genes_groups_df is convenient but might be slow in a loop if called many times
+        # but here we are calling it per group (cluster), which is fine.
+        df = sc.get.rank_genes_groups_df(adata, group=group)
         if df is None:
-            return []
+            results[str(group)] = []
+            continue
+            
+        genes = df['names'].head(top_n).tolist()
+        logger.debug(f"Group {group}: Extracted {len(genes)} raw gene entries (top_n={top_n})")
         
-        gene_names = df['names'].head(top_n).tolist()
-        # 4. If names are numeric, map them to adata.var.index
-        if len(gene_names) > 0 and all(str(g).isdigit() for g in gene_names[:5]):
-            try:
-                # Convert to integer indices and lookup in var.index
-                indices = [int(g) for g in gene_names if str(g).isdigit()]
-                gene_names = [str(adata.var.index[i]) for i in indices if i < len(adata.var)]
-            except Exception as e:
-                logger.warning(f"Failed to map numeric indices to var index: {e}")
-        
-        return gene_names
-        
-    except Exception as e:
-        logger.error(f"Failed to extract DEGs for cluster {cluster_id}: {e}")
-        return []
+        if is_numeric:
+            indices = []
+            for g in genes:
+                try:
+                    indices.append(int(g))
+                except (ValueError, TypeError):
+                    continue
+            
+            # Map to var names
+            # If rank_genes_groups used raw, we should map to raw.var_names
+            if adata.uns['rank_genes_groups']['params'].get('use_raw', True) and adata.raw is not None:
+                mapped_genes = [str(adata.raw.var_names[i]) for i in indices if i < len(adata.raw.var_names)]
+            else:
+                mapped_genes = [str(adata.var.index[i]) for i in indices if i < len(adata.var)]
+            results[str(group)] = mapped_genes
+        else:
+            results[str(group)] = [str(g) for g in genes]
+            
+    return results
 
 def get_expression_profile(adata, cluster_col: str, cluster_id: str, genes: List[str]) -> Dict[str, float]:
     """Retrieve the mean expression of specific genes for a given cluster."""

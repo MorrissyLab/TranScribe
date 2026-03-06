@@ -3,8 +3,8 @@ from pathlib import Path
 from transcribe.config import logger
 import scanpy as sc
 import pandas as pd
-from transcribe.evaluation.evaluator import evaluate_dataset
-from transcribe.evaluation.datasets import fetch_toy_dataset
+from transcribe.processing.inference_engine import run_analysis
+from transcribe.processing.datasets import fetch_toy_dataset
 from transcribe.tools.factor_utils import load_factorized_data
 import re
 
@@ -96,7 +96,7 @@ def expand_batch_datasets(datasets: list) -> list:
 def run_yaml_eval(config_path: str):
     import sys
     logger.debug(f"run_yaml_eval starting with {config_path}")
-    """Parses a YAML configuration and runs evaluate_dataset on cross products of models x datasets.
+    """Parses a YAML configuration and runs run_analysis on cross products of models x datasets.
     
     The YAML should contain a 'mode' key set to 'eval' or 'infer'.
     Defaults to 'eval' if not specified.
@@ -153,7 +153,7 @@ def run_yaml_eval(config_path: str):
                 
                 if data_path.lower() == "toy_data":
                     if modality == "spatial":
-                        from transcribe.evaluation.datasets import fetch_spatial_toy_dataset
+                        from transcribe.processing.datasets import fetch_spatial_toy_dataset
                         adata, c_col, t_col = fetch_spatial_toy_dataset()
                     else:
                         adata, c_col, t_col = fetch_toy_dataset()
@@ -191,7 +191,7 @@ def run_yaml_eval(config_path: str):
                         raw_data_path = None
                         factorized_type = "sc"
                     
-                evaluate_dataset(
+                run_analysis(
                     adata=adata,
                     factorized_df=factorized_df,
                     usage_df=usage_df,
@@ -217,7 +217,7 @@ def run_yaml_eval(config_path: str):
     # After all models and datasets are run, generate a single HTML report 
     # to compare them head to head
     try:
-        from transcribe.evaluation.report_generator import generate_html_report
+        from transcribe.processing.report_generator import generate_html_report
         generate_html_report(output_base)
     except Exception as e:
         logger.error(f"Error generating overall HTML report: {e}")

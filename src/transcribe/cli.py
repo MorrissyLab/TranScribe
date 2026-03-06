@@ -2,7 +2,7 @@ import click
 import scanpy as sc
 from pathlib import Path
 from transcribe.config import logger, DEFAULT_MODEL_NAME, setup_logging
-from transcribe.evaluation.yaml_runner import run_yaml_eval
+from transcribe.processing.yaml_runner import run_yaml_eval
 
 @click.command()
 @click.option('--config', default=None, type=str, help='Path to YAML config (set mode: eval/infer in the YAML).')
@@ -45,9 +45,9 @@ def cli(config: str, data_path: str, cluster_col: str, output: str, dataset_name
     ds_name = dataset_name or Path(data_path).stem
     run_name = f"{ds_name}_{DEFAULT_MODEL_NAME.replace('/', '-')}"
     
-    from transcribe.evaluation.evaluator import evaluate_dataset
+    from transcribe.processing.inference_engine import run_analysis
     
-    evaluate_dataset(
+    run_analysis(
         adata=adata,
         data_path=data_path,
         cluster_col=cluster_col,
@@ -59,7 +59,7 @@ def cli(config: str, data_path: str, cluster_col: str, output: str, dataset_name
         out_dir=output,
     )
     
-    from transcribe.evaluation.report_generator import generate_html_report
+    from transcribe.processing.report_generator import generate_html_report
     generate_html_report(output)
     
     logger.info(f"Inference complete. Results saved to {out_dir}")

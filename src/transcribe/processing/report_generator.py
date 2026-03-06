@@ -69,12 +69,12 @@ def _load_dataset(item: Path) -> Optional[dict]:
         "run_id":          item.name.replace(" ", "_").replace(".", "_").replace("-", "_").lower(),
         "name":            data.get("dataset_name", item.name),
         "accuracy":        metrics.get("accuracy", 0.0),
-        "eval_accuracy":   metrics.get("evaluator_accuracy", metrics.get("accuracy", 0.0)),
+        "eval_accuracy":   metrics.get("inference_accuracy", metrics.get("accuracy", 0.0)),
         "mapping":         data.get("cluster_mapping", {}),
         "degs":            data.get("cluster_degs", {}),
         "raw":             data.get("raw_results", {}),
         "traces":          traces,
-        "evaluator_results": data.get("evaluator_results", {}),
+        "inference_results": data.get("inference_results", {}),
         "cluster_colors":  data.get("cluster_colors", {}),
         "umap_path":       f"{item.name}/umap_predicted.png" if umap_path.exists() else None,
         "spatial_path":    f"{item.name}/spatial_predicted.png" if spatial_path.exists() else None,
@@ -252,7 +252,7 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
     for cid, m in ds["mapping"].items():
         true_lbl = m.get("true", "Unknown")
         pred_lbl = m.get("pred", "Error")
-        ev_res   = ds["evaluator_results"].get(cid, {})
+        ev_res   = ds["inference_results"].get(cid, {})
         is_match = ev_res.get("is_match", False)
         c_color  = ds["cluster_colors"].get(cid, "#ffffff")
         dot      = f'<span class="color-dot" style="background:{c_color}"></span>'

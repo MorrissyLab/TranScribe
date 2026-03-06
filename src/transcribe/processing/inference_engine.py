@@ -8,24 +8,25 @@ from datetime import datetime
 from pathlib import Path
 from transcribe.workflow.graph import build_workflow
 from transcribe.agents.delta_evaluator import create_delta_agent
-from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile, ensure_umap_coords
+from transcribe.tools.scanpy_utils import get_all_degs, get_expression_profile, ensure_umap_coords
 from sklearn.metrics import accuracy_score
 from transcribe.config import logger, DEFAULT_MODEL_NAME
 from tqdm import tqdm
 
 # Import factored out modules
-from transcribe.evaluation.datasets import fetch_toy_dataset, fetch_spatial_toy_dataset
-from transcribe.evaluation.plotting import plot_evaluation_results
+from transcribe.processing.datasets import fetch_toy_dataset, fetch_spatial_toy_dataset
+from transcribe.processing.plotting import plot_evaluation_results
 
 from transcribe.anntools.marker_overlap import compute_genesets_annotation
 from transcribe.anntools.pathway_enrichment import run_topics_pathway_enrichment
 
 
-def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
+def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
-    Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
+    Runs the TranScribe analysis (inference or evaluation) against a dataset.
+    If ground_truth_col is None, it runs in inference mode.
     """
-    logger.debug(f"Entering evaluate_dataset for {dataset_name} (modality={modality})")
+    logger.debug(f"Entering run_analysis for {dataset_name} (modality={modality})")
     start_time_iso = datetime.now().isoformat()
     start_ts = time.time()
     
@@ -67,10 +68,10 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     true_labels = {}
     if is_eval:
         if modality == "factorized":
-             if isinstance(ground_truth_col, str) and os.path.exists(ground_truth_col):
-                  gt_df = pd.read_csv(ground_truth_col)
-                  for _, row in gt_df.iterrows():
-                       true_labels[str(row.iloc[0])] = str(row.iloc[1])
+            if isinstance(ground_truth_col, str) and os.path.exists(ground_truth_col):
+                gt_df = pd.read_csv(ground_truth_col)
+                for _, row in gt_df.iterrows():
+                    true_labels[str(row.iloc[0])] = str(row.iloc[1])
         else:
             for cluster_id in clusters:
                 mask = adata.obs[cluster_col] == cluster_id
@@ -144,11 +145,22 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
             
     logger.debug(f"Finished anntools block. Clusters: {len(clusters)}")
     
-    for cluster_id in tqdm(clusters, desc=f"Annotating {dataset_name}"):
+    # Pre-extract all DEGs for AnnData-based modalities (non-factorized)
+    all_cluster_degs = {}
+    if modality != "factorized":
+        all_cluster_degs = get_all_degs(adata, cluster_col, top_n=50)
+    
+    pbar = tqdm(clusters, desc=f"Annotating {dataset_name}")
+    for cluster_id in pbar:
         # Rate limit protection
         time.sleep(2)
         cid_str = str(cluster_id)
-        logger.info(f"{'Evaluating' if is_eval else 'Annotating'} cluster {cid_str}" + (f" (Truth: {true_labels[cid_str]})" if is_eval else ""))
+        status_msg = f"{'Evaluating' if is_eval else 'Annotating'} cluster {cid_str}"
+        if is_eval:
+            status_msg += f" (Truth: {true_labels[cid_str]})"
+        
+        pbar.set_description(f"{status_msg}...")
+        logger.debug(status_msg)
         
         try:
             nichecard = {}
@@ -156,13 +168,13 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
                 top_degs, expr_profile = extract_top_factor_markers(factorized_df, cid_str, top_n=50)
                 cluster_degs[cid_str] = top_degs
             else:
-                top_degs = extract_top_degs(adata, cluster_col, cid_str)
+                top_degs = all_cluster_degs.get(cid_str, [])
                 cluster_degs[cid_str] = top_degs
                 expr_profile = get_expression_profile(adata, cluster_col, cid_str, top_degs)
                 
                 if modality == "spatial":
                     nichecard = build_nichecard(adata, cluster_col, cid_str)
-                    logger.info(f"Spatial Nichecard for {cid_str}: {nichecard}")
+                    logger.debug(f"Spatial Nichecard for {cid_str}: {nichecard}")
             
             state_input = {
                  "cluster_id": cid_str,
@@ -186,6 +198,7 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
             for attempt in range(num_tries):
                 if attempt > 0:
                     time.sleep(2)
+                pbar.set_description(f"{status_msg} (Running Gamma/attempt {attempt+1})")
                 logger.debug(f"Invoking app for cluster {cid_str} (attempt {attempt+1})")
                 final_state = app.invoke(state_input)
                 logger.debug(f"App finished for cluster {cid_str}")
@@ -229,15 +242,19 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
             if ann:
                 predictions[cid_str] = ann.cell_type
                 raw_results[cid_str] = ann.dict() if hasattr(ann, 'dict') else ann
+                pred_msg = f"Predicted {cid_str}: {ann.cell_type}"
                 if is_eval:
-                    logger.info(f"Predicted: {ann.cell_type} | Truth: {true_labels[cid_str]}")
+                    logger.debug(f"{pred_msg} | Truth: {true_labels[cid_str]}")
                 else:
-                    logger.info(f"Predicted: {ann.cell_type}")
+                    logger.debug(pred_msg)
+                pbar.set_postfix({"last_pred": ann.cell_type[:20]})
             else:
                 predictions[cid_str] = "Unknown"
+                pbar.set_postfix({"last_pred": "Unknown"})
         except Exception as e:
             logger.error(f"Error evaluating cluster {cid_str}: {e}")
             predictions[cid_str] = "Error"
+            pbar.set_postfix({"last_pred": "Error"})
             
     # Calculate naive metrics
     y_true = []
@@ -266,7 +283,7 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
                 logger.debug(f"Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}")
                 delta_results[cid_str] = match_res.dict() if hasattr(match_res, 'dict') else match_res
                 eval_matches.append(match_res.is_match)
-                logger.info(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
+                logger.debug(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
             except Exception as e:
                 logger.debug(f"Delta error for cluster {cid_str}: {e}")
                 logger.error(f"Delta error for cluster {cid_str}: {e}")
@@ -279,12 +296,12 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
         acc = accuracy_score(y_true, y_pred)
         eval_acc = sum(eval_matches) / len(eval_matches) if eval_matches else 0
         logger.info(f"Naive Accuracy Score (Exact Match): {acc:.2f}")
-        logger.info(f"Evaluator Accuracy Score (Biological Match): {eval_acc:.2f}")
+        logger.info(f"Inference Accuracy Score (Biological Match): {eval_acc:.2f}")
     
     end_ts = time.time()
     end_time_iso = datetime.now().isoformat()
     duration = end_ts - start_ts
-
+ 
     cluster_mapping = {}
     for c in clusters:
         cid = str(c)
@@ -309,11 +326,11 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
             "modality": modality,
             "factorized_type": factorized_type
         },
-        "metrics": {"accuracy": float(acc), "evaluator_accuracy": float(eval_acc)},
+        "metrics": {"accuracy": float(acc), "inference_accuracy": float(eval_acc)},
         "cluster_mapping": cluster_mapping,
         "cluster_degs": cluster_degs,
         "raw_results": raw_results,
-        "evaluator_results": delta_results,
+        "inference_results": delta_results,
         "cluster_colors": cluster_colors
     }
 
@@ -343,18 +360,18 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     
     # Generate interactive HTML report
     try:
-        from transcribe.evaluation.report_generator import generate_html_report
+        from transcribe.processing.report_generator import generate_html_report
         generate_html_report(out_dir)
     except Exception as e:
         logger.error(f"Failed to generate HTML report: {e}")
     
     return acc, df_results
 
-def run_toy_evaluation():
-    logger.info("Starting Toy Evaluation Pipeline.")
-    from transcribe.evaluation.datasets import fetch_toy_dataset
+def run_toy_analysis():
+    logger.info("Starting Toy Analysis Pipeline.")
+    from transcribe.processing.datasets import fetch_toy_dataset
     adata, cluster_col, truth_col = fetch_toy_dataset()
-    evaluate_dataset(adata, cluster_col=cluster_col, ground_truth_col=truth_col, dataset_name="PBMC3kToy")
+    run_analysis(adata, cluster_col=cluster_col, ground_truth_col=truth_col, dataset_name="PBMC3kToy")
     
 if __name__ == "__main__":
-    run_toy_evaluation()
+    run_toy_analysis()

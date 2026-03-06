@@ -1,10 +1,17 @@
-
 import matplotlib.pyplot as plt
 import seaborn as sns
 import scanpy as sc
 import pandas as pd
 import json
+import os
 from transcribe.config import logger
+from typing import List, Dict, Any, Optional
+
+try:
+    import distinctipy
+    HAS_DISTINCTIPY = True
+except ImportError:
+    HAS_DISTINCTIPY = False
 
 def plot_evaluation_results(
     modality,
@@ -29,16 +36,35 @@ def plot_evaluation_results(
     """
     cluster_colors = {}
     
+    # Pre-generate distinct colors if possible
+    if HAS_DISTINCTIPY:
+        if modality == "factorized":
+            # For factorized mode, we colors factors
+            n_colors = len(clusters)
+            if n_colors > 0:
+                colors = distinctipy.get_colors(n_colors, rng=42)
+                hex_colors = [distinctipy.get_hex(c) for c in colors]
+                cluster_colors = {str(f): hex_colors[i] for i, f in enumerate(clusters)}
+        else:
+            # For categorical clusters
+            if cluster_col in adata.obs:
+                adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
+                categories = adata.obs[cluster_col].cat.categories
+                n_colors = len(categories)
+                colors = distinctipy.get_colors(n_colors, rng=42)
+                hex_colors = [distinctipy.get_hex(c) for c in colors]
+                adata.uns[f'{cluster_col}_colors'] = hex_colors
+                cluster_colors = {str(cat): hex_colors[i] for i, cat in enumerate(categories)}
+    
     # 1. Prediction Mapping / Factor Loadings
     if modality == "factorized":
         if adata is not None:
             try:
-                import os
                 plots_dir = dataset_out_dir / "plots"
                 os.makedirs(plots_dir, exist_ok=True)
                 
                 for cid_str in clusters:
-                    logger.info(f"Generating plot for factor {cid_str}...")
+                    logger.debug(f"Generating plot for factor {cid_str}...")
                     score_col = f"Factor_{cid_str}"
                     
                     if usage_df is not None and cid_str in usage_df.index:
@@ -88,20 +114,14 @@ def plot_evaluation_results(
             logger.info("Skipping visualizations for factorized mode because raw_data_path/adata was not provided.")
     else:
         try:
-            logger.info(f"Generating {'Spatial Plot' if modality == 'spatial' else 'UMAP'}...")
-            import distinctipy
-            # We want each cluster to have a unique distinct color
-            adata.obs[cluster_col] = adata.obs[cluster_col].astype('category')
-            categories = adata.obs[cluster_col].cat.categories
-            colors = distinctipy.get_colors(len(categories), rng=42)
-            hex_colors = [distinctipy.get_hex(c) for c in colors]
-            adata.uns[f'{cluster_col}_colors'] = hex_colors
+            logger.debug(f"Generating {'Spatial Plot' if modality == 'spatial' else 'UMAP'}...")
             
+            # Colors are already handled in pre-generation block above if HAS_DISTINCTIPY is True
             # Check if we should use spatial plotting
             has_spatial = 'spatial' in adata.uns or modality == "spatial"
             
             if has_spatial:
-                logger.info("Generating Spatial Plot...")
+                logger.debug("Generating Spatial Plot...")
                 import squidpy as sq
                 try:
                     lib_id = list(adata.uns['spatial'].keys())[0] if 'spatial' in adata.uns else None
@@ -118,16 +138,10 @@ def plot_evaluation_results(
                     sq.pl.spatial_scatter(adata, color=cluster_col, shape=None, ax=ax, library_id=lib_id, show=False)
                     plot_filename = "spatial_predicted.png"
             else:
-                logger.info("Generating UMAP...")
+                logger.debug("Generating UMAP...")
                 sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
                 plot_filename = "umap_predicted.png"
             
-            # Map back to cluster IDs for the JSON report
-            label_to_color = dict(zip(categories, hex_colors))
-            for c in clusters:
-                if str(c) in label_to_color:
-                    cluster_colors[str(c)] = label_to_color[str(c)]
-                        
             # Re-save JSON with colors updated
             eval_data["cluster_colors"] = cluster_colors
             with open(dataset_out_dir / "eval_report.json", "w") as f:
@@ -142,7 +156,7 @@ def plot_evaluation_results(
             
     # 2. Match Count Graph for Evaluation Mode
     if is_eval:
-        logger.info("Generating match count plot...")
+        logger.debug("Generating match count plot...")
         df = pd.DataFrame({"Cluster": [str(c) for c in clusters], "True_Label": y_true, "Predicted": y_pred})
         df['Exact_Match'] = df['True_Label'] == df['Predicted']
         
