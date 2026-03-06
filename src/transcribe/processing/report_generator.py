@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Optional, List
 from transcribe.config import logger
+from transcribe.tools.exporter import export_summary_to_csv
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +171,12 @@ def _summary_tab(datasets: List[dict]) -> str:
     return f"""
     <div id="tab_summary" class="tab-pane">
         <div style="text-align:center;margin-bottom:28px">
-            <h1>{heading}</h1>
+            <div style="display:flex; justify-content:center; align-items:center; gap:20px; margin-bottom:10px">
+                <h1 style="margin:0">{heading}</h1>
+                <a href="summary_results.csv" class="btn btn-purple" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px">
+                    <span>📥</span> Export CSV
+                </a>
+            </div>
             {badges_html}
         </div>
 
@@ -449,5 +455,10 @@ def generate_html_report(eval_dir: str):
 
     out_path = base_dir / "index.html"
     out_path.write_text(html, encoding="utf-8")
+    
+    # Export CSV
+    csv_path = base_dir / "summary_results.csv"
+    export_summary_to_csv(datasets, csv_path)
+
     logger.info(f"HTML report written to {out_path}")
     logger.info(f"[TranScribe] Report generated: {out_path}")

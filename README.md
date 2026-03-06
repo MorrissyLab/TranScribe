@@ -13,6 +13,7 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 - **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
 - **Interactive Reports**: Rich HTML dashboards with sticky UMAPs, **Spatial Plots**, trace logs, and reasoning cards.
+- **CSV Data Export**: One-click summary export for batch runs, capturing experiment names, clusters, predicted cell types, DEGs, and detailed reasoning.
 - **Simplified CLI**: Unified configuration-driven workflow.
 - **RAG Enabled**: Optional integration with Pinecone for knowledge-retrieval (Agent Gamma).
 
