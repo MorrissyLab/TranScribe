@@ -89,13 +89,21 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
                 logger.error(f"RAG Retrieval failed during Gamma execution: {e}")
                 rag_context = f"RAG failed: {e}"
         
+        # Format alpha_candidates as a human-readable string for Gamma
+        alpha_text = ""
+        if hasattr(state["alpha_candidates"], "candidates"):
+            for idx, c in enumerate(state["alpha_candidates"].candidates):
+                alpha_text += f"{idx+1}. {c.cell_type} (Confidence: {c.confidence})\n"
+        else:
+            alpha_text = str(state["alpha_candidates"])
+
         result = gamma.invoke({
             "organism": metadata.get("organism", "Unknown"),
             "tissue_type": metadata.get("tissue", "Unknown"),
             "disease": metadata.get("disease", "Unknown"),
             "cluster_id": state["cluster_id"],
             "top_degs": state["top_degs"],
-            "alpha_candidates": state["alpha_candidates"].model_dump_json(),
+            "alpha_candidates": alpha_text,
             "beta_feedback": beta_feedback,
             "rag_context": rag_context
         })

@@ -221,7 +221,7 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                 
                 try:
                     from langchain_core.messages import SystemMessage, HumanMessage
-                    from transcribe.agents.factory import BaseAgentBuilder
+                    from transcribe.agents.agent_factory import BaseAgentBuilder
                     if BaseAgentBuilder.is_gemma_model(model_name):
                         combined_msg = HumanMessage(content=f"{sys_msg}\n\n{usr_msg}")
                         resp = llm.invoke([combined_msg])

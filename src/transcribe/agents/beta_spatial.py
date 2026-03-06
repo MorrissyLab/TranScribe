@@ -1,4 +1,4 @@
-from transcribe.agents.factory import get_agent_builder
+from transcribe.agents.agent_factory import get_agent_builder
 
 def create_beta_agent(provider: str = "gemini", model_name: str = "gemini-2.5-flash-lite", temperature: float = 0.1):
     """

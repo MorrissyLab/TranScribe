@@ -1,4 +1,4 @@
-from typing import Any, Type, Union
+from typing import Any, Type, Union, List, Literal, get_origin, get_args
 from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
@@ -42,17 +42,84 @@ class GeminiAgentBuilder(BaseAgentBuilder):
 
 class GemmaAgentBuilder(BaseAgentBuilder):
     """Builder for models with limited instructions/tool-calling (Gemma) using Pydantic parsers."""
+    def _get_example_value(self, field_type: Any) -> Any:
+        from typing import get_origin, get_args, List, Literal
+        origin = get_origin(field_type)
+        args = get_args(field_type)
+        
+        # Handle Literals (use first value)
+        if origin is Literal and args:
+            return args[0]
+        # Handle Lists
+        if origin is list or origin is List:
+             item_type = args[0] if args else str
+             return [self._get_example_value(item_type)]
+        # Handle nested Pydantic models
+        if isinstance(field_type, type) and issubclass(field_type, BaseModel):
+            nested_fields = {}
+            if hasattr(field_type, "model_fields"):
+                nested_fields = field_type.model_fields
+            elif hasattr(field_type, "__fields__"):
+                nested_fields = field_type.__fields__
+            
+            res = {}
+            for name, f in nested_fields.items():
+                f_ann = f.annotation if hasattr(f, 'annotation') else f.type_
+                res[name] = self._get_example_value(f_ann)
+            
+            # Special case for confidence
+            if "confidence" in res:
+                res["confidence"] = "high"
+            return res
+            
+        # Default
+        return "..."
+
+    def _strip_markdown(self, text_input: Any) -> str:
+        text = ""
+        if hasattr(text_input, "content"):
+            text = str(text_input.content)
+        else:
+            text = str(text_input)
+        
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines.pop(0)
+            if lines and lines[-1].strip().startswith("```"):
+                lines.pop(-1)
+            text = "\n".join(lines).strip()
+        return text
+
     def build_structured_chain(self, system_prompt: str, user_prompt: str, output_schema: Type[BaseModel]) -> Any:
         parser = PydanticOutputParser(pydantic_object=output_schema)
         
-        # Merge system and user messages into one "user" block for Gemma compat
-        # Use a placeholder for format instructions to avoid brace interpolation errors
-        combined_template = f"{system_prompt}\n\nFormat Instructions:\n{{format_instructions}}\n\n{user_prompt}"
+        example_obj = self._get_example_value(output_schema)
+            
+        import json as json_builtin
+        example_json = json_builtin.dumps(example_obj)
+        example_json_escaped = example_json.replace("{", "{{").replace("}", "}}")
+
+        combined_template = (
+            f"Role: {system_prompt}\n\n"
+            f"Data: {user_prompt}\n\n"
+            f"Respond ONLY with a JSON object following this EXACT structure: {example_json_escaped}\n"
+            "Do NOT include any preamble or code blocks. Respond ONLY with the raw JSON.\n\n"
+            "{{format_instructions}}"
+        )
         
         prompt = ChatPromptTemplate.from_messages([
             ("user", combined_template)
         ])
-        return prompt.partial(format_instructions=parser.get_format_instructions()) | self.llm | parser
+        
+        from langchain_core.runnables import RunnableLambda
+        return (
+            prompt.partial(format_instructions=parser.get_format_instructions()) 
+            | self.llm 
+            | RunnableLambda(self._strip_markdown) 
+            | parser
+        )
 
     def build_string_chain(self, system_prompt: str, user_prompt: str) -> Any:
         combined_prompt = f"{system_prompt}\n\n{user_prompt}"

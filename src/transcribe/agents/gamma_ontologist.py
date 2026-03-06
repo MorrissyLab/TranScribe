@@ -1,5 +1,5 @@
 from transcribe.core.schema import FinalAnnotation
-from transcribe.agents.factory import get_agent_builder
+from transcribe.agents.agent_factory import get_agent_builder
 
 def create_gamma_agent(provider: str = "gemini", model_name: str = "gemini-2.5-flash-lite", temperature: float = 0.1):
     """
