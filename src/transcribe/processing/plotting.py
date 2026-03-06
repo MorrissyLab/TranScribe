@@ -139,7 +139,7 @@ def plot_evaluation_results(
                     plot_filename = "spatial_predicted.png"
             else:
                 logger.debug("Generating UMAP...")
-                sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
+                sc.pl.umap(adata, color=cluster_col, show=False, legend_loc='on data')
                 plot_filename = "umap_predicted.png"
             
             # Re-save JSON with colors updated

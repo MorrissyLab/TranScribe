@@ -93,12 +93,16 @@ def expand_batch_datasets(datasets: list) -> list:
             
     return expanded
 
-def run_yaml_eval(config_path: str):
+def run_yaml_eval(config_path: str, report_only: bool = False):
     import sys
+    import json
+    import os
+    from transcribe.processing.plotting import plot_evaluation_results
+    
     logger.debug(f"run_yaml_eval starting with {config_path}")
     """Parses a YAML configuration and runs run_analysis on cross products of models x datasets.
     
-    The YAML should contain a 'mode' key set to 'eval' or 'infer'.
+    The YAML should contain a 'mode' key set to 'eval', 'infer', or 'report'.
     Defaults to 'eval' if not specified.
     """
     p = Path(config_path)
@@ -114,6 +118,8 @@ def run_yaml_eval(config_path: str):
         return
 
     mode = config.get("mode", "eval")
+    # Both CLI flag and YAML mode can trigger report-only
+    is_report = (mode == "report") or report_only
     is_infer = mode == "infer"
         
     provider = config.get("provider", "gemini")
@@ -136,83 +142,148 @@ def run_yaml_eval(config_path: str):
     output_base = config.get("output", default_output)
     num_tries = config.get("num_tries", 1)
     
-    mode_label = "inference" if is_infer else "evaluation"
-    logger.info(f"Starting YAML multi-model {mode_label} for {len(models)} models and {len(datasets)} datasets. Tries per cluster: {num_tries}")
-    
-    for model in models:
-        for ds in datasets:
-            ds_name = ds.get("name", "UnnamedDataset")
-            # We append the model name so the UI sees them side by side
-            run_name = f"{ds_name}_{model.replace('/', '-')}"
-            
-            logger.info(f"{'Annotating' if is_infer else 'Evaluating'} -> Model: {model} | Dataset: {ds_name}")
-            
-            try:
-                data_path = ds.get("path", "")
-                modality = ds.get("modality", "single-cell")
+    if is_report:
+        logger.info(f"Starting report-only regeneration for {len(models)} models and {len(datasets)} datasets.")
+        for model in models:
+            for ds in datasets:
+                ds_name = ds.get("name", "UnnamedDataset")
+                run_name = f"{ds_name}_{model.replace('/', '-')}"
+                dataset_out_dir = Path(output_base) / run_name
+                report_path = dataset_out_dir / "eval_report.json"
                 
-                if data_path.lower() == "toy_data":
-                    if modality == "spatial":
-                        from transcribe.processing.datasets import fetch_spatial_toy_dataset
-                        adata, c_col, t_col = fetch_spatial_toy_dataset()
-                    else:
-                        adata, c_col, t_col = fetch_toy_dataset()
-                    cluster_col = ds.get("cluster_col", c_col)
-                    truth_col = None if is_infer else ds.get("ground_truth_col", t_col)
-                    factorized_df = None
+                if not report_path.exists():
+                    logger.warning(f"Skipping {run_name}: No eval_report.json found in {dataset_out_dir}")
+                    continue
+                
+                logger.info(f"Regenerating plots for {run_name}...")
+                try:
+                    with open(report_path, "r", encoding="utf-8") as f:
+                        eval_data = json.load(f)
+                    
+                    # Load data for plotting
+                    data_path = ds.get("path", "")
+                    modality = ds.get("modality", "single-cell")
+                    
+                    adata = None
                     usage_df = None
-                    raw_data_path = None
-                    factorized_type = "sc"
-                else:
+                    factorized_df = None
+                    
                     if modality == "factorized":
-                        factorized_df = load_factorized_data(data_path)
-                        adata = None
-                        cluster_col = ds.get("cluster_col", "factor")
-                        truth_col = None if is_infer else ds.get("ground_truth_path", None)
-                        raw_data_path = ds.get("raw_data_path", None)
-                        
+                        if data_path:
+                            factorized_df = load_factorized_data(data_path)
                         usage_path = ds.get("usage", None)
                         if usage_path:
                             try:
                                 usage_df = pd.read_csv(usage_path, sep="\t", index_col=0)
-                            except Exception as e:
-                                logger.warning(f"Failed to load usage data from {usage_path}: {e}")
-                                usage_df = None
-                        else:
-                            usage_df = None
-                            
-                        factorized_type = ds.get("factorized_type", "sc")
+                            except: pass
+                        
+                        raw_data_path = ds.get("raw_data_path")
+                        if raw_data_path and os.path.exists(raw_data_path):
+                             adata = sc.read_h5ad(raw_data_path)
                     else:
-                        adata = sc.read_h5ad(data_path)
+                        if data_path and os.path.exists(data_path):
+                            adata = sc.read_h5ad(data_path)
+                            # Ensure UMAP coords if missing (e.g. from Seurat)
+                            from transcribe.tools.scanpy_utils import ensure_umap_coords
+                            ensure_umap_coords(adata)
+
+                    plot_evaluation_results(
+                        modality=modality,
+                        adata=adata,
+                        clusters=eval_data.get("clusters", []),
+                        cluster_degs=eval_data.get("cluster_degs", {}),
+                        predictions=eval_data.get("inference_results", {}),
+                        factorized_type=ds.get("factorized_type", "sc"),
+                        actual_run_name=run_name,
+                        dataset_out_dir=dataset_out_dir,
+                        cluster_col=ds.get("cluster_col", "leiden" if modality != "factorized" else "factor"),
+                        eval_data=eval_data,
+                        is_eval=not is_infer,
+                        y_true=eval_data.get("metrics", {}).get("y_true", []), # Might be missing, but plot can handle it
+                        y_pred=eval_data.get("metrics", {}).get("y_pred", []),
+                        acc=eval_data.get("metrics", {}).get("accuracy", 0.0),
+                        usage_df=usage_df
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to regenerate report for {run_name}: {e}")
+    else:
+        mode_label = "inference" if is_infer else "evaluation"
+        logger.info(f"Starting YAML multi-model {mode_label} for {len(models)} models and {len(datasets)} datasets. Tries per cluster: {num_tries}")
+        
+        for model in models:
+            for ds in datasets:
+                ds_name = ds.get("name", "UnnamedDataset")
+                # We append the model name so the UI sees them side by side
+                run_name = f"{ds_name}_{model.replace('/', '-')}"
+                
+                logger.info(f"{'Annotating' if is_infer else 'Evaluating'} -> Model: {model} | Dataset: {ds_name}")
+                
+                try:
+                    data_path = ds.get("path", "")
+                    modality = ds.get("modality", "single-cell")
+                    
+                    if data_path.lower() == "toy_data":
+                        if modality == "spatial":
+                            from transcribe.processing.datasets import fetch_spatial_toy_dataset
+                            adata, c_col, t_col = fetch_spatial_toy_dataset()
+                        else:
+                            adata, c_col, t_col = fetch_toy_dataset()
+                        cluster_col = ds.get("cluster_col", c_col)
+                        truth_col = None if is_infer else ds.get("ground_truth_col", t_col)
                         factorized_df = None
                         usage_df = None
-                        cluster_col = ds.get("cluster_col", "leiden")
-                        truth_col = None if is_infer else ds.get("ground_truth_col", None)
                         raw_data_path = None
                         factorized_type = "sc"
-                    
-                run_analysis(
-                    adata=adata,
-                    factorized_df=factorized_df,
-                    usage_df=usage_df,
-                    raw_data_path=raw_data_path,
-                    data_path=data_path,
-                    cluster_col=cluster_col,
-                    ground_truth_col=truth_col,
-                    dataset_name=ds_name,
-                    run_name=run_name,
-                    provider=provider,
-                    model_name=model,
-                    out_dir=output_base,
-                    organism=ds.get("organism", "Human"),
-                    tissue=ds.get("tissue", "Unknown"),
-                    disease=ds.get("disease", "Normal"),
-                    num_tries=num_tries,
-                    modality=modality,
-                    factorized_type=factorized_type
-                )
-            except Exception as e:
-                logger.error(f"Error during {mode_label} of {run_name}: {e}")
+                    else:
+                        if modality == "factorized":
+                            factorized_df = load_factorized_data(data_path)
+                            adata = None
+                            cluster_col = ds.get("cluster_col", "factor")
+                            truth_col = None if is_infer else ds.get("ground_truth_path", None)
+                            raw_data_path = ds.get("raw_data_path", None)
+                            
+                            usage_path = ds.get("usage", None)
+                            if usage_path:
+                                try:
+                                    usage_df = pd.read_csv(usage_path, sep="\t", index_col=0)
+                                except Exception as e:
+                                    logger.warning(f"Failed to load usage data from {usage_path}: {e}")
+                                    usage_df = None
+                            else:
+                                usage_df = None
+                                
+                            factorized_type = ds.get("factorized_type", "sc")
+                        else:
+                            adata = sc.read_h5ad(data_path)
+                            factorized_df = None
+                            usage_df = None
+                            cluster_col = ds.get("cluster_col", "leiden")
+                            truth_col = None if is_infer else ds.get("ground_truth_col", None)
+                            raw_data_path = None
+                            factorized_type = "sc"
+                        
+                    run_analysis(
+                        adata=adata,
+                        factorized_df=factorized_df,
+                        usage_df=usage_df,
+                        raw_data_path=raw_data_path,
+                        data_path=data_path,
+                        cluster_col=cluster_col,
+                        ground_truth_col=truth_col,
+                        dataset_name=ds_name,
+                        run_name=run_name,
+                        provider=provider,
+                        model_name=model,
+                        out_dir=output_base,
+                        organism=ds.get("organism", "Human"),
+                        tissue=ds.get("tissue", "Unknown"),
+                        disease=ds.get("disease", "Normal"),
+                        num_tries=num_tries,
+                        modality=modality,
+                        factorized_type=factorized_type
+                    )
+                except Exception as e:
+                    logger.error(f"Error during {mode_label} of {run_name}: {e}")
                 
     # After all models and datasets are run, generate a single HTML report 
     # to compare them head to head

@@ -6,18 +6,22 @@ from transcribe.processing.yaml_runner import run_yaml_eval
 
 @click.command()
 @click.option('--config', default=None, type=str, help='Path to YAML config (set mode: eval/infer in the YAML).')
+@click.option('--mode', default=None, type=click.Choice(['infer', 'eval', 'report']), help='Override the mode specified in the YAML config.')
+@click.option('--report-only', is_flag=True, help='Regenerate reports and plots from existing results without rerun.')
 @click.option('--data_path', required=False, help='Path to the .h5ad dataset file.')
 @click.option('--cluster_col', default='leiden', help='Column in adata.obs containing cluster IDs.')
 @click.option('--output', default='results/infer_results', help='Directory to save results.')
 @click.option('--dataset_name', default=None, type=str, help='Name for this dataset (used in report). Defaults to filename stem.')
 @click.option('--use_rag', is_flag=True, help='Enable RAG context retrieval for Agent Gamma.')
-def cli(config: str, data_path: str, cluster_col: str, output: str, dataset_name: str, use_rag: bool):
+def cli(config: str, mode: str, report_only: bool, data_path: str, cluster_col: str, output: str, dataset_name: str, use_rag: bool):
     """TranScribe: Automated Annotation of Transcriptomics via Tri-Agent Framework."""
     
     # YAML config mode (reads mode, provider, model, metadata from YAML)
     if config:
         setup_logging()
-        run_yaml_eval(config)
+        
+        # Pass the mode override and report_only flag to run_yaml_eval
+        run_yaml_eval(config, report_only=report_only)
         return
         
     if not data_path:

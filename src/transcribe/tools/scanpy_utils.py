@@ -1,33 +1,13 @@
-import scanpy as sc
 import pandas as pd
+import scanpy as sc
 import numpy as np
+import warnings
+import logging
 from typing import List, Dict, Tuple
 from transcribe.config import logger
 
-
-import pandas as pd
-import scanpy as sc
-import warnings
-import logging
-from typing import Dict, List
-
-logger = logging.getLogger(__name__)
-
-import pandas as pd
-import scanpy as sc
-import warnings
-import logging
-from typing import Dict, List
-
-logger = logging.getLogger(__name__)
-
-import pandas as pd
-import scanpy as sc
-import warnings
-import logging
-from typing import Dict, List
-
-logger = logging.getLogger(__name__)
+# Note: The user manually added multiple import blocks. 
+# We consolidate them here while keeping the logic intact.
 
 def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str]]:
     """Compute DEGs once for all clusters and return a mapping of {cluster_id: [genes]}."""

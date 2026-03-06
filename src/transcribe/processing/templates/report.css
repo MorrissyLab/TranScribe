@@ -576,10 +576,10 @@ h3 {
 
 .experiment-right .data-table {
     font-size: 0.73rem;
-    table-layout: fixed;
+    table-layout: auto;
     width: 100%;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
+    word-wrap: normal;
+    overflow-wrap: normal;
 }
 
 .experiment-right .data-table th,
@@ -593,7 +593,8 @@ h3 {
 /* Compact column widths for the right-panel table */
 .experiment-right .data-table th:first-child,
 .experiment-right .data-table td:first-child {
-    width: 26px;
+    width: 35px;
+    min-width: 35px;
 }
 
 .experiment-right .cluster-grid {
