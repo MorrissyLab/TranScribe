@@ -2,7 +2,7 @@
 
 mode: "infer"
 provider: "gemini"
-output: "Z:\\University of Calgary\\Morrissy Lab - Documents\\MOH_MultiOmics\\transcribe_samples_annotations"
+output: "Z:\\University of Calgary\\Morrissy Lab - Documents\\MOH_MultiOmics\\transcribe_samples"
 num_tries: 1
 
 models:

@@ -19,6 +19,28 @@ from transcribe.evaluation.plotting import plot_evaluation_results
 from transcribe.anntools.marker_overlap import compute_genesets_annotation
 from transcribe.anntools.pathway_enrichment import run_topics_pathway_enrichment
 
+def ensure_umap_coords(adata):
+    """Ensures X_umap is present in adata.obsm, falling back to other names if necessary."""
+    if "X_umap" not in adata.obsm:
+        if "X_umap" in adata.obsm:
+            logger.info("Found X_umap. Using it as X_umap.")
+            adata.obsm["X_umap"] = adata.obsm["X_umap"]
+        elif "X_umap.rna" in adata.obsm:
+            logger.info("Found X_umap.rna. Using it as X_umap.")
+            adata.obsm["X_umap"] = adata.obsm["X_umap.rna"]
+        elif "X_umap.atac" in adata.obsm:
+            logger.info("Found X_umap.atac. Using it as X_umap.")
+            adata.obsm["X_umap"] = adata.obsm["X_umap.atac"]
+        else:
+            logger.info("X_umap missing. Computing UMAP coordinates...")
+            try:
+                if "X_pca" not in adata.obsm:
+                    sc.pp.pca(adata)
+                sc.pp.neighbors(adata)
+                sc.tl.umap(adata)
+            except Exception as e:
+                logger.warning(f"Failed to compute UMAP: {e}")
+
 def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
@@ -50,26 +72,12 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
         if raw_data_path and os.path.exists(raw_data_path):
              logger.info(f"Loading raw data for factorized visualization from {raw_data_path}")
              adata = sc.read_h5ad(raw_data_path)
-             if factorized_type == "sc" and "X_umap" not in adata.obsm:
-                 if "X_umap" in adata.obsm:
-                     logger.info("Raw data missing X_umap, but found X_umap. Using it as X_umap.")
-                     adata.obsm["X_umap"] = adata.obsm["X_umap"]
-                 elif "X_umap.rna" in adata.obsm:
-                     logger.info("Raw data missing X_umap, but found X_umap.rna. Using it as X_umap.")
-                     adata.obsm["X_umap"] = adata.obsm["X_umap.rna"]
-                 elif "X_umap.atac" in adata.obsm:
-                     logger.info("Raw data missing X_umap, but found X_umap.atac. Using it as X_umap.")
-                     adata.obsm["X_umap"] = adata.obsm["X_umap.atac"]
-                 else:
-                     logger.info("Raw data missing X_umap. Computing UMAP coordinates...")
-                     sc.pp.pca(adata)
-                     sc.pp.neighbors(adata)
-                     sc.tl.umap(adata)
+             if factorized_type == "sc":
+                 ensure_umap_coords(adata)
     else:
-        if adata is None:
-             raise ValueError("adata must be provided for non-factorized modality")
         adata.obs[cluster_col] = adata.obs[cluster_col].astype(str)
         clusters = sorted(adata.obs[cluster_col].unique())
+        ensure_umap_coords(adata)
 
     # Track metadata
     is_toy = "toy" in data_path.lower() or dataset_name.lower().endswith("toy")

@@ -18,8 +18,16 @@ def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) 
             
     if compute_degs:
         try:
-            # Precompute DEG if not already done.
-            sc.tl.rank_genes_groups(adata, cluster_col, method='t-test')
+            # De-fragment dataframes to avoid PerformanceWarnings
+            adata.obs = adata.obs.copy()
+            adata.var = adata.var.copy()
+            
+            import warnings
+            with warnings.catch_warnings():
+                # Explicitly ignore fragmentation warnings from pandas/scanpy
+                warnings.simplefilter("ignore", category=pd.errors.PerformanceWarning)
+                # Precompute DEG if not already done.
+                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test')
         except Exception as e:
             logger.error(f"Failed to compute DEGs via sc.tl.rank_genes_groups: {e}")
             return []
