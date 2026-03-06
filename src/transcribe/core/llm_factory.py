@@ -36,6 +36,7 @@ class LLMFactory:
         "gemini": GeminiLLMFactory(),
         "openai": OpenAILLMFactory()
     }
+    _instance_cache = {}
     
     @classmethod
     def register_provider(cls, provider_name: str, factory: BaseLLMFactory):
@@ -49,3 +50,12 @@ class LLMFactory:
         if not factory:
             raise ValueError(f"Unsupported LLM provider: {provider_name}. Available: {list(cls._factories.keys())}")
         return factory
+
+    @classmethod
+    def get_llm(cls, provider_name: str, model_name: str, temperature: float = 0.1) -> Any:
+        """Retrieves a cached LLM instance or creates a new one."""
+        cache_key = (provider_name.lower(), model_name, temperature)
+        if cache_key not in cls._instance_cache:
+            factory = cls.get_provider(provider_name)
+            cls._instance_cache[cache_key] = factory.get_llm(model_name, temperature)
+        return cls._instance_cache[cache_key]

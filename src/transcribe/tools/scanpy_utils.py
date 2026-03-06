@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
 from transcribe.config import logger
+import scanpy as sc
 
 def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) -> List[str]:
     """Retrieve top differentially expressed genes for a specific cluster."""
@@ -117,3 +118,24 @@ def build_nichecard(adata, cluster_col: str, target_cluster: str, spatial_col: s
     frequencies = counts / counts.sum()
     
     return {str(k): round(float(v), 4) for k, v in frequencies.items()}
+
+def ensure_umap_coords(adata):
+    """Ensures X_umap is present in adata.obsm, falling back to other names if necessary."""
+    if "X_umap" in adata.obsm:
+        return
+        
+    if "X_umap.rna" in adata.obsm:
+        logger.info("Found X_umap.rna. Using it as X_umap.")
+        adata.obsm["X_umap"] = adata.obsm["X_umap.rna"]
+    elif "X_umap.atac" in adata.obsm:
+        logger.info("Found X_umap.atac. Using it as X_umap.")
+        adata.obsm["X_umap"] = adata.obsm["X_umap.atac"]
+    else:
+        logger.info("X_umap missing or coordinates not found. Computing UMAP...")
+        try:
+            if "X_pca" not in adata.obsm:
+                sc.pp.pca(adata)
+            sc.pp.neighbors(adata)
+            sc.tl.umap(adata)
+        except Exception as e:
+            logger.warning(f"Failed to compute UMAP: {e}")

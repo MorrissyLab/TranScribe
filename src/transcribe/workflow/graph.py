@@ -21,15 +21,29 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
 
     def run_alpha(state: AgentState):
         meta = state.get("metadata", {})
+        
+        # Build dynamic data payload to omit empty fields
+        data_parts = []
+        if state.get("expression_profile"):
+            data_parts.append(f"Expression Profile: {state['expression_profile']}")
+            
+        mo = state.get("marker_overlap")
+        if mo and str(mo).lower() != "none available":
+            data_parts.append(f"Marker Overlap (Top 3 Genesets): {mo}")
+            
+        pe = state.get("pathway_enrichment")
+        if pe and str(pe).lower() != "none available":
+            data_parts.append(f"Pathway Enrichment (Top 10 GO terms): {pe}")
+            
+        data_payload = "\n".join(data_parts)
+
         result = alpha.invoke({
             "organism": meta.get("organism", "Unknown"),
             "tissue_type": meta.get("tissue_type", "Unknown"),
             "disease": meta.get("disease", "Unknown"),
             "cluster_id": state["cluster_id"],
             "top_degs": state["top_degs"],
-            "expression_profile": state["expression_profile"],
-            "marker_overlap": state.get("marker_overlap", "None Available"),
-            "pathway_enrichment": state.get("pathway_enrichment", "None Available")
+            "data_payload": data_payload
         })
         messages = state.get("messages", [])
         messages.append({"agent": "Alpha", "input": {"cluster_id": state["cluster_id"], "top_degs": state["top_degs"]}, "output": result.dict() if hasattr(result, 'dict') else str(result)})

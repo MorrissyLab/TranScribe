@@ -218,13 +218,30 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
     # Plot
     plot_html = ""
     is_factorized = meta.get("modality") == "factorized"
-    is_spatial = meta.get("modality") == "spatial" or (is_factorized and meta.get("factorized_type") == "spatial")
     
+    # Check for spatial files explicitly
+    has_spatial_file = ds.get("spatial_path") is not None
+    has_umap_file = ds.get("umap_path") is not None
+    
+    # Determine if we should treat this as a spatial display
+    # (either modality says so, or we ONLY have a spatial file)
+    is_spatial = meta.get("modality") == "spatial" or (is_factorized and meta.get("factorized_type") == "spatial")
+    if not is_spatial and has_spatial_file and not has_umap_file:
+        is_spatial = True
+
     # Global plot if not factorized
     if not is_factorized:
-        plot_path = ds.get("spatial_path") if is_spatial else ds.get("umap_path")
-        plot_label = "Spatial Plot" if is_spatial else "Annotated UMAP"
-        
+        # Prefer spatial if in spatial mode and file exists, otherwise fallback to umap if it exists
+        if is_spatial and has_spatial_file:
+            plot_path = ds.get("spatial_path")
+            plot_label = "Spatial Plot"
+        elif has_umap_file:
+            plot_path = ds.get("umap_path")
+            plot_label = "Annotated UMAP"
+        else:
+            plot_path = None
+            plot_label = ""
+            
         if plot_path:
             plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
 

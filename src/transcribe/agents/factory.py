@@ -10,13 +10,18 @@ class BaseAgentBuilder:
         self.provider = provider
         self.model_name = model_name
         self.temperature = temperature
-        self.llm = LLMFactory.get_provider(provider).get_llm(model_name, temperature)
+        self.llm = LLMFactory.get_llm(provider, model_name, temperature)
 
     def build_structured_chain(self, system_prompt: str, user_prompt: str, output_schema: Type[BaseModel]) -> Any:
         raise NotImplementedError
 
     def build_string_chain(self, system_prompt: str, user_prompt: str) -> Any:
         raise NotImplementedError
+
+    @staticmethod
+    def is_gemma_model(model_name: str) -> bool:
+        """Centralized check for Gemma model family."""
+        return "gemma" in model_name.lower()
 
 class GeminiAgentBuilder(BaseAgentBuilder):
     """Builder for high-capability models (Gemini/OpenAI) using native structural outputs."""
@@ -56,11 +61,10 @@ class GemmaAgentBuilder(BaseAgentBuilder):
         ])
         return prompt | self.llm | StrOutputParser()
 
+
 def get_agent_builder(provider: str, model_name: str, temperature: float = 0.1) -> BaseAgentBuilder:
     """Factory to return the appropriate builder based on model name."""
-    m_name = model_name.lower()
-    # Explicitly check for Gemma models
-    if "gemma" in m_name:
+    if BaseAgentBuilder.is_gemma_model(model_name):
         return GemmaAgentBuilder(provider, model_name, temperature)
     # Default to Gemini/Standard behavior
     return GeminiAgentBuilder(provider, model_name, temperature)

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from transcribe.workflow.graph import build_workflow
 from transcribe.agents.delta_evaluator import create_delta_agent
-from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile
+from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile, ensure_umap_coords
 from sklearn.metrics import accuracy_score
 from transcribe.config import logger, DEFAULT_MODEL_NAME
 
@@ -19,27 +19,6 @@ from transcribe.evaluation.plotting import plot_evaluation_results
 from transcribe.anntools.marker_overlap import compute_genesets_annotation
 from transcribe.anntools.pathway_enrichment import run_topics_pathway_enrichment
 
-def ensure_umap_coords(adata):
-    """Ensures X_umap is present in adata.obsm, falling back to other names if necessary."""
-    if "X_umap" not in adata.obsm:
-        if "X_umap" in adata.obsm:
-            logger.info("Found X_umap. Using it as X_umap.")
-            adata.obsm["X_umap"] = adata.obsm["X_umap"]
-        elif "X_umap.rna" in adata.obsm:
-            logger.info("Found X_umap.rna. Using it as X_umap.")
-            adata.obsm["X_umap"] = adata.obsm["X_umap.rna"]
-        elif "X_umap.atac" in adata.obsm:
-            logger.info("Found X_umap.atac. Using it as X_umap.")
-            adata.obsm["X_umap"] = adata.obsm["X_umap.atac"]
-        else:
-            logger.info("X_umap missing. Computing UMAP coordinates...")
-            try:
-                if "X_pca" not in adata.obsm:
-                    sc.pp.pca(adata)
-                sc.pp.neighbors(adata)
-                sc.tl.umap(adata)
-            except Exception as e:
-                logger.warning(f"Failed to compute UMAP: {e}")
 
 def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_path: str = None, cluster_col: str = "leiden", ground_truth_col: str = None, dataset_name: str = "PBMC3kToy", run_name: str = None, provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, out_dir: str = "results/eval_results", organism: str = "Human", tissue: str = "PBMC", disease: str = "Normal", data_path: str = "toy_data", num_tries: int = 1, modality: str = "single-cell", factorized_type: str = "sc"):
     """
@@ -219,7 +198,7 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
                 ann = candidate_anns[0]
                 final_state = final_states[0]
             elif len(candidate_anns) > 1:
-                llm = LLMFactory.get_provider(provider).get_llm(model_name, temperature=0.1)
+                llm = LLMFactory.get_llm(provider, model_name, temperature=0.1)
                 sys_msg = "You are an expert Ontologist. You are given several candidate cell type annotations. Select the best one."
                 usr_msg = f"Tissue: {tissue}\nDisease: {disease}\n\nCandidates:\n"
                 for idx, c in enumerate(candidate_anns):
@@ -228,7 +207,8 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
                 
                 try:
                     from langchain_core.messages import SystemMessage, HumanMessage
-                    if "gemma" in model_name.lower():
+                    from transcribe.agents.factory import BaseAgentBuilder
+                    if BaseAgentBuilder.is_gemma_model(model_name):
                         combined_msg = HumanMessage(content=f"{sys_msg}\n\n{usr_msg}")
                         resp = llm.invoke([combined_msg])
                     else:

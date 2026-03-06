@@ -97,17 +97,28 @@ def plot_evaluation_results(
             hex_colors = [distinctipy.get_hex(c) for c in colors]
             adata.uns[f'{cluster_col}_colors'] = hex_colors
             
-            if modality == "spatial":
+            # Check if we should use spatial plotting
+            has_spatial = 'spatial' in adata.uns or modality == "spatial"
+            
+            if has_spatial:
+                logger.info("Generating Spatial Plot...")
                 import squidpy as sq
                 try:
-                    lib_id = list(adata.uns['spatial'].keys())[0]
+                    lib_id = list(adata.uns['spatial'].keys())[0] if 'spatial' in adata.uns else None
                 except Exception:
                     lib_id = None
                     
                 fig, ax = plt.subplots()
-                sq.pl.spatial_scatter(adata, color=cluster_col, shape=None, ax=ax, library_id=lib_id, legend_loc=None)
-                plot_filename = "spatial_predicted.png"
+                # Use sc.pl.spatial as a robust alternative or sq if available
+                try:
+                    sc.pl.spatial(adata, color=cluster_col, ax=ax, library_id=lib_id, show=False)
+                    plot_filename = "spatial_predicted.png"
+                except Exception as e:
+                    logger.warning(f"sc.pl.spatial failed, trying sq.pl.spatial_scatter: {e}")
+                    sq.pl.spatial_scatter(adata, color=cluster_col, shape=None, ax=ax, library_id=lib_id, show=False)
+                    plot_filename = "spatial_predicted.png"
             else:
+                logger.info("Generating UMAP...")
                 sc.pl.umap(adata, color=cluster_col, show=False, legend_loc=None)
                 plot_filename = "umap_predicted.png"
             

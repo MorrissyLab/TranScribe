@@ -2,7 +2,7 @@ from typing import Any
 from transcribe.agents.factory import get_agent_builder
 from transcribe.core.schema import EvaluationMatch
 
-def create_delta_agent(provider: str = "gemini", model_name: str = "gemma-3-4b-it"):
+def create_delta_agent(provider: str = "gemini", model_name: str = "gemini-2.5-flash-lite", temperature: float = 0.1):
     """
     Agent Delta: The Evaluator.
     Responsibility: Compare the ground truth label with the predicted label 
@@ -32,5 +32,5 @@ def create_delta_agent(provider: str = "gemini", model_name: str = "gemma-3-4b-i
     Respond in the requested structured format.
     """
     
-    builder = get_agent_builder(provider, model_name)
+    builder = get_agent_builder(provider, model_name, temperature)
     return builder.build_structured_chain(system_prompt, user_prompt, EvaluationMatch)
