@@ -3,14 +3,16 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple
 from transcribe.config import logger
-import scanpy as sc
+
 
 def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) -> List[str]:
-    """Retrieve top differentially expressed genes for a specific cluster."""
-    # Ensure cluster_col is categorical for scanpy
+    """Retrieve top differentially expressed genes, mapping indices to symbols if needed."""
+    
+    # 1. Ensure cluster column is categorical
     if not isinstance(adata.obs[cluster_col].dtype, pd.CategoricalDtype):
         adata.obs[cluster_col] = adata.obs[cluster_col].astype(str).astype('category')
-
+    
+    # 2. Compute DEGs if not already present for this column
     compute_degs = True
     if 'rank_genes_groups' in adata.uns:
         params = adata.uns['rank_genes_groups'].get('params', {})
@@ -18,33 +20,38 @@ def extract_top_degs(adata, cluster_col: str, cluster_id: str, top_n: int = 50) 
             compute_degs = False
             
     if compute_degs:
+        import warnings
         try:
-            # De-fragment dataframes to avoid PerformanceWarnings
-            adata.obs = adata.obs.copy()
-            adata.var = adata.var.copy()
-            
-            import warnings
             with warnings.catch_warnings():
-                # Explicitly ignore fragmentation warnings from pandas/scanpy
                 warnings.simplefilter("ignore", category=pd.errors.PerformanceWarning)
-                # Precompute DEG if not already done.
-                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test')
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test', use_raw=True)
         except Exception as e:
-            logger.error(f"Failed to compute DEGs via sc.tl.rank_genes_groups: {e}")
+            logger.error(f"Failed to compute DEGs: {e}")
             return []
-    
-    if 'rank_genes_groups' not in adata.uns or 'names' not in adata.uns['rank_genes_groups']:
-        logger.error(f"DEGs not found in adata.uns['rank_genes_groups'] for {cluster_col}")
-        return []
 
-    names = adata.uns['rank_genes_groups']['names']
-    
-    cid_str = str(cluster_id)
-    if cid_str not in names.dtype.names:
-        logger.warning(f"Cluster ID {cid_str} not found in the DEGs for column {cluster_col}.")
+    # 3. Extract names for the cluster
+    try:
+        cid_str = str(cluster_id)
+        df = sc.get.rank_genes_groups_df(adata, group=cid_str)
+        if df is None:
+            return []
+        
+        gene_names = df['names'].head(top_n).tolist()
+        # 4. If names are numeric, map them to adata.var.index
+        if len(gene_names) > 0 and all(str(g).isdigit() for g in gene_names[:5]):
+            try:
+                # Convert to integer indices and lookup in var.index
+                indices = [int(g) for g in gene_names if str(g).isdigit()]
+                gene_names = [str(adata.var.index[i]) for i in indices if i < len(adata.var)]
+            except Exception as e:
+                logger.warning(f"Failed to map numeric indices to var index: {e}")
+        
+        return gene_names
+        
+    except Exception as e:
+        logger.error(f"Failed to extract DEGs for cluster {cluster_id}: {e}")
         return []
-
-    return names[cid_str][:top_n].tolist()
 
 def get_expression_profile(adata, cluster_col: str, cluster_id: str, genes: List[str]) -> Dict[str, float]:
     """Retrieve the mean expression of specific genes for a given cluster."""

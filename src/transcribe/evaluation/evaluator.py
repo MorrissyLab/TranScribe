@@ -11,6 +11,7 @@ from transcribe.agents.delta_evaluator import create_delta_agent
 from transcribe.tools.scanpy_utils import extract_top_degs, get_expression_profile, ensure_umap_coords
 from sklearn.metrics import accuracy_score
 from transcribe.config import logger, DEFAULT_MODEL_NAME
+from tqdm import tqdm
 
 # Import factored out modules
 from transcribe.evaluation.datasets import fetch_toy_dataset, fetch_spatial_toy_dataset
@@ -24,7 +25,7 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     """
     Evaluates the TranScribe framework against a dataset (or runs inference if ground_truth_col is None).
     """
-    print(f"DEBUG: Entering evaluate_dataset for {dataset_name} (modality={modality})", flush=True)
+    logger.debug(f"Entering evaluate_dataset for {dataset_name} (modality={modality})")
     start_time_iso = datetime.now().isoformat()
     start_ts = time.time()
     
@@ -92,16 +93,16 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     # Run anntools for factorized mode
     marker_overlap_df = None
     pathway_enrichment_df = None
-    print(f"DEBUG: Checking if modality is factorized and factorized_df is provided (modality={modality})", flush=True)
+    logger.debug(f"Checking if modality is factorized and factorized_df is provided (modality={modality})")
     if modality == "factorized" and factorized_df is not None:
         try:
-            print("DEBUG: Inside factorized block, beginning anntools...", flush=True)
+            logger.debug("Inside factorized block, beginning anntools...")
             # We use a default geneset for marker overlap and pathway enrichment
             # You can make these configurable later
             geneset_name = "mouse_celltypes_all" if "mouse" in organism.lower() else "human_cancer_all"
             
             # 1. Run Marker Overlap
-            print(f"DEBUG: Running compute_genesets_annotation for {geneset_name}", flush=True)
+            logger.debug(f"Running compute_genesets_annotation for {geneset_name}")
             try:
                 compute_genesets_annotation(
                     rf_usages=factorized_df.T,
@@ -115,12 +116,12 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
 
             overlap_csv = os.path.join(dataset_out_dir, "marker_overlap_results", f"scores_{actual_run_name}_{geneset_name}.csv")
             if os.path.exists(overlap_csv):
-                print(f"DEBUG: Found overlap csv: {overlap_csv}", flush=True)
+                logger.debug(f"Found overlap csv: {overlap_csv}")
                 marker_overlap_df = pd.read_csv(overlap_csv, index_col=0)
                 
             # 2. Run Pathway Enrichment
             genome = "mm10" if "mouse" in organism.lower() else "GRCh38"
-            print(f"DEBUG: Running run_topics_pathway_enrichment for GO:BP with genome {genome}", flush=True)
+            logger.debug(f"Running run_topics_pathway_enrichment for GO:BP with genome {genome}")
             try:
                 run_topics_pathway_enrichment(
                     rf_usages=factorized_df.T,
@@ -134,16 +135,16 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
 
             pathway_csv = os.path.join(dataset_out_dir, "pathway_enrichment_results", f"readable_summary_{actual_run_name}_GO_BP_n1000.csv")
             if os.path.exists(pathway_csv):
-                print(f"DEBUG: Found pathway csv: {pathway_csv}", flush=True)
+                logger.debug(f"Found pathway csv: {pathway_csv}")
                 pathway_enrichment_df = pd.read_csv(pathway_csv, index_col=0)
                 
         except Exception as e:
             logger.error(f"Error running anntools for factorized mode: {e}")
-            print(f"DEBUG: Caught exception in anntools: {e}", flush=True)
+            logger.debug(f"Caught exception in anntools: {e}")
             
-    print(f"DEBUG: Finished anntools block. Clusters: {len(clusters)}", flush=True)
+    logger.debug(f"Finished anntools block. Clusters: {len(clusters)}")
     
-    for cluster_id in clusters:
+    for cluster_id in tqdm(clusters, desc=f"Annotating {dataset_name}"):
         # Rate limit protection
         time.sleep(2)
         cid_str = str(cluster_id)
@@ -185,14 +186,14 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
             for attempt in range(num_tries):
                 if attempt > 0:
                     time.sleep(2)
-                print(f"DEBUG: Invoking app for cluster {cid_str} (attempt {attempt+1})", flush=True)
+                logger.debug(f"Invoking app for cluster {cid_str} (attempt {attempt+1})")
                 final_state = app.invoke(state_input)
-                print(f"DEBUG: App finished for cluster {cid_str}", flush=True)
+                logger.debug(f"App finished for cluster {cid_str}")
                 final_states.append(final_state)
                 if final_state.get("final_annotation"):
                     candidate_anns.append(final_state.get("final_annotation"))
             
-            print(f"DEBUG: Found {len(candidate_anns)} candidates for cluster {cid_str}", flush=True)
+            logger.debug(f"Found {len(candidate_anns)} candidates for cluster {cid_str}")
             ann = None
             if len(candidate_anns) == 1:
                 ann = candidate_anns[0]
@@ -249,7 +250,7 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
     eval_matches = []
     if is_eval:
         logger.info("Running Agent Delta (Evaluator) for biological reconciliation...")
-        for cluster_id in clusters:
+        for cluster_id in tqdm(clusters, desc="Biological Correlation (Delta)"):
             cid_str = str(cluster_id)
             true_l = true_labels[cid_str]
             pred_l = predictions[cid_str]
@@ -260,14 +261,14 @@ def evaluate_dataset(adata=None, factorized_df=None, usage_df=None, raw_data_pat
                 continue
                 
             try:
-                print(f"DEBUG: Invoking delta_agent for cluster {cid_str}", flush=True)
+                logger.debug(f"Invoking delta_agent for cluster {cid_str}")
                 match_res = delta_agent.invoke({"true_label": true_l, "predicted_label": pred_l})
-                print(f"DEBUG: Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}", flush=True)
+                logger.debug(f"Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}")
                 delta_results[cid_str] = match_res.dict() if hasattr(match_res, 'dict') else match_res
                 eval_matches.append(match_res.is_match)
                 logger.info(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
             except Exception as e:
-                print(f"DEBUG: Delta error for cluster {cid_str}: {e}", flush=True)
+                logger.debug(f"Delta error for cluster {cid_str}: {e}")
                 logger.error(f"Delta error for cluster {cid_str}: {e}")
                 delta_results[cid_str] = {"is_match": False, "explanation": f"Evaluator Error: {e}"}
                 eval_matches.append(False)

@@ -95,8 +95,7 @@ def expand_batch_datasets(datasets: list) -> list:
 
 def run_yaml_eval(config_path: str):
     import sys
-    print(f"DEBUG: run_yaml_eval starting with {config_path}")
-    sys.stdout.flush()
+    logger.debug(f"run_yaml_eval starting with {config_path}")
     """Parses a YAML configuration and runs evaluate_dataset on cross products of models x datasets.
     
     The YAML should contain a 'mode' key set to 'eval' or 'infer'.
@@ -229,5 +228,5 @@ if __name__ == "__main__":
     parser.add_argument("config", nargs="?", default="test_factorized.yaml", help="Path to YAML configuration file")
     args = parser.parse_args()
     
-    print(f"Running evaluation with config: {args.config}")
+    logger.info(f"Running evaluation with config: {args.config}")
     run_yaml_eval(args.config)

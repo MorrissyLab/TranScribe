@@ -66,7 +66,7 @@ def _load_dataset(item: Path) -> Optional[dict]:
     metrics      = data.get("metrics", {})
 
     return {
-        "run_id":          item.name.replace(" ", "_").lower(),
+        "run_id":          item.name.replace(" ", "_").replace(".", "_").replace("-", "_").lower(),
         "name":            data.get("dataset_name", item.name),
         "accuracy":        metrics.get("accuracy", 0.0),
         "eval_accuracy":   metrics.get("evaluator_accuracy", metrics.get("accuracy", 0.0)),
@@ -450,4 +450,4 @@ def generate_html_report(eval_dir: str):
     out_path = base_dir / "index.html"
     out_path.write_text(html, encoding="utf-8")
     logger.info(f"HTML report written to {out_path}")
-    print(f"[TranScribe] Report generated: {out_path}")
+    logger.info(f"[TranScribe] Report generated: {out_path}")
