@@ -5,6 +5,30 @@ from typing import List, Dict, Tuple
 from transcribe.config import logger
 
 
+import pandas as pd
+import scanpy as sc
+import warnings
+import logging
+from typing import Dict, List
+
+logger = logging.getLogger(__name__)
+
+import pandas as pd
+import scanpy as sc
+import warnings
+import logging
+from typing import Dict, List
+
+logger = logging.getLogger(__name__)
+
+import pandas as pd
+import scanpy as sc
+import warnings
+import logging
+from typing import Dict, List
+
+logger = logging.getLogger(__name__)
+
 def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str]]:
     """Compute DEGs once for all clusters and return a mapping of {cluster_id: [genes]}."""
     
@@ -13,68 +37,39 @@ def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str
         adata.obs[cluster_col] = adata.obs[cluster_col].astype(str).astype('category')
     
     # 2. Compute DEGs if not already present for this column
-    compute_degs = True
-    if 'rank_genes_groups' in adata.uns:
-        params = adata.uns['rank_genes_groups'].get('params', {})
-        if params.get('groupby') == cluster_col:
-            compute_degs = False
-    
-    if compute_degs:
+    params = adata.uns.get('rank_genes_groups', {}).get('params', {})
+    if params.get('groupby') != cluster_col:
         logger.debug(f"Computing DEGs for {cluster_col}...")
-        import warnings
         try:
             with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=pd.errors.PerformanceWarning)
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test', use_raw=True)
+                warnings.simplefilter("ignore")
+                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test', use_raw=False)
+                # Update params after computing
+                params = adata.uns['rank_genes_groups']['params'] 
         except Exception as e:
             logger.error(f"Failed to compute DEGs: {e}")
             return {}
 
-    # 3. Extract all groups
-    results = {}
-    groups = adata.uns['rank_genes_groups']['names'].dtype.names
-    
-    # Check if indices are numeric (indices vs symbols)
-    # We check the first cluster's first few genes
-    sample_genes = adata.uns['rank_genes_groups']['names'][0]
-    is_numeric = False
-    if len(sample_genes) > 0:
-        # Check first 5 genes of the first cluster
-        first_group = groups[0]
-        check_genes = [str(adata.uns['rank_genes_groups']['names'][i][first_group]) for i in range(min(5, len(adata.uns['rank_genes_groups']['names'])))]
-        if all(g.isdigit() for g in check_genes):
-            is_numeric = True
-            logger.debug(f"DEGs for {cluster_col} appear to be numeric indices. Mapping to gene symbols...")
+    # 3. Determine the correct gene names index based on 'use_raw'
+    use_raw = params.get('use_raw', True)
+    if use_raw and adata.raw is not None:
+        gene_names = adata.raw.var.index
+    else:
+        gene_names = adata.var.index
 
-    for group in groups:
-        # get_rank_genes_groups_df is convenient but might be slow in a loop if called many times
-        # but here we are calling it per group (cluster), which is fine.
-        df = sc.get.rank_genes_groups_df(adata, group=group)
-        if df is None:
-            results[str(group)] = []
-            continue
-            
-        genes = df['names'].head(top_n).tolist()
-        logger.debug(f"Group {group}: Extracted {len(genes)} raw gene entries (top_n={top_n})")
+    # 4. Extract all groups directly from the structured NumPy array
+    results = {}
+    names_record = adata.uns['rank_genes_groups']['names']
+    
+    for group in names_record.dtype.names:
+        # Slice top N directly (extremely fast compared to pandas conversions)
+        raw_genes = [str(g) for g in names_record[group][:top_n]]
         
-        if is_numeric:
-            indices = []
-            for g in genes:
-                try:
-                    indices.append(int(g))
-                except (ValueError, TypeError):
-                    continue
-            
-            # Map to var names
-            # If rank_genes_groups used raw, we should map to raw.var_names
-            if adata.uns['rank_genes_groups']['params'].get('use_raw', True) and adata.raw is not None:
-                mapped_genes = [str(adata.raw.var_names[i]) for i in indices if i < len(adata.raw.var_names)]
-            else:
-                mapped_genes = [str(adata.var.index[i]) for i in indices if i < len(adata.var)]
-            results[str(group)] = mapped_genes
+        # 5. Map indices to names if they are digits AND not literally named as digits in the index
+        if raw_genes and raw_genes[0].isdigit() and raw_genes[0] not in gene_names:
+            results[str(group)] = [gene_names[int(idx)] for idx in raw_genes if int(idx) < len(gene_names)]
         else:
-            results[str(group)] = [str(g) for g in genes]
+            results[str(group)] = raw_genes
             
     return results
 
