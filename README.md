@@ -108,7 +108,7 @@ uv sync
 ### 2. Environment Setup
 Create a `.env` file in the root directory:
 ```env
-GEMINI_API_KEY="[ENCRYPTION_KEY]"
+GOOGLE_API_KEY="[ENCRYPTION_KEY]"
 MODEL_NAME="gemma-3-12b-it"
 PINECONE_INDEX="your-index" (optional)
 ```

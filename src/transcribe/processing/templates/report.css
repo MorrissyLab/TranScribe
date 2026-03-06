@@ -131,6 +131,7 @@ h3 {
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    white-space: nowrap;
 }
 
 .clickable-row {
@@ -150,6 +151,7 @@ h3 {
     color: #fff;
     font-weight: 700;
     font-size: 0.82rem;
+    white-space: nowrap;
 }
 
 .badge-high {

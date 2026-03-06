@@ -99,14 +99,14 @@ def _sidebar_link(ds: dict) -> str:
 
 
 def _summary_tab(datasets: List[dict]) -> str:
-    has_eval   = any(d["metadata"].get("is_eval", True) for d in datasets)
+    has_eval   = any(d["metadata"].get("is_eval", False) for d in datasets)
     all_infer  = not has_eval
     total_dur  = sum(d["metadata"].get("duration_seconds", 0) for d in datasets)
     avg_dur    = total_dur / len(datasets) if datasets else 0
 
     rows = ""
     for ds in datasets:
-        is_eval  = ds["metadata"].get("is_eval", True)
+        is_eval  = ds["metadata"].get("is_eval", False)
         type_str = "Evaluation" if is_eval else "Inference"
         model    = ds["metadata"].get("model_name", "Unknown")
         run_id   = ds["run_id"]
@@ -188,7 +188,7 @@ def _summary_tab(datasets: List[dict]) -> str:
 
 def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -> str:
     run_id   = ds["run_id"]
-    is_eval  = ds["metadata"].get("is_eval", True)
+    is_eval  = ds["metadata"].get("is_eval", False)
     meta     = ds["metadata"]
     acc      = ds["accuracy"]
     eval_acc = ds["eval_accuracy"]
@@ -427,7 +427,7 @@ def generate_html_report(eval_dir: str):
             "model":         ds["metadata"].get("model_name", "Unknown"),
             "accuracy":      ds["accuracy"],
             "eval_accuracy": ds["eval_accuracy"],
-            "is_eval":       ds["metadata"].get("is_eval", True),
+            "is_eval":       ds["metadata"].get("is_eval", False),
         }
         for ds in datasets
     ], ensure_ascii=True)

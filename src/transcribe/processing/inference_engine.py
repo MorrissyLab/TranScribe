@@ -40,15 +40,13 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     from transcribe.tools.factor_utils import extract_top_factor_markers
     
     # Check if we are in Evaluation Mode or Inference Mode
-    is_eval = False
+    is_eval = ground_truth_col is not None
     clusters = []
     
     if modality == "factorized":
         if factorized_df is None:
             raise ValueError("factorized_df must be provided for modality='factorized'")
         clusters = factorized_df.index.tolist()
-        if ground_truth_col is not None:
-             is_eval = True
              
         if raw_data_path and os.path.exists(raw_data_path):
              logger.info(f"Loading raw data for factorized visualization from {raw_data_path}")
@@ -56,6 +54,8 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
              if factorized_type == "sc":
                  ensure_umap_coords(adata)
     else:
+        if adata is None:
+            raise ValueError("adata must be provided for non-factorized modalities")
         adata.obs[cluster_col] = adata.obs[cluster_col].astype(str)
         clusters = sorted(adata.obs[cluster_col].unique())
         ensure_umap_coords(adata)
@@ -237,11 +237,11 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
             elif final_states:
                 final_state = final_states[-1]
                 
-            traces[cid_str] = [msg.dict() if hasattr(msg, 'dict') else msg for msg in final_state.get("messages", [])] if final_state else []
+            traces[cid_str] = [msg.model_dump() if hasattr(msg, 'model_dump') else (msg.dict() if hasattr(msg, 'dict') else msg) for msg in final_state.get("messages", [])] if final_state else []
             
             if ann:
                 predictions[cid_str] = ann.cell_type
-                raw_results[cid_str] = ann.dict() if hasattr(ann, 'dict') else ann
+                raw_results[cid_str] = ann.model_dump() if hasattr(ann, 'model_dump') else (ann.dict() if hasattr(ann, 'dict') else ann)
                 pred_msg = f"Predicted {cid_str}: {ann.cell_type}"
                 if is_eval:
                     logger.debug(f"{pred_msg} | Truth: {true_labels[cid_str]}")
@@ -281,7 +281,7 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                 logger.debug(f"Invoking delta_agent for cluster {cid_str}")
                 match_res = delta_agent.invoke({"true_label": true_l, "predicted_label": pred_l})
                 logger.debug(f"Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}")
-                delta_results[cid_str] = match_res.dict() if hasattr(match_res, 'dict') else match_res
+                delta_results[cid_str] = match_res.model_dump() if hasattr(match_res, 'model_dump') else (match_res.dict() if hasattr(match_res, 'dict') else match_res)
                 eval_matches.append(match_res.is_match)
                 logger.debug(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
             except Exception as e:
