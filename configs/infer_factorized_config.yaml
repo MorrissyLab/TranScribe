@@ -1,7 +1,6 @@
 # TranScribe Factorized Inference Configuration
 
 mode: "infer"
-provider: "gemini"
 output: "results/infer_results"
 num_tries: 1
 

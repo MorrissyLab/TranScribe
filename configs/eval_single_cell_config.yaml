@@ -1,11 +1,10 @@
 mode: "eval"
-provider: "gemini"
 output: "results/eval_results"
 num_tries: 1
 models:
-  - "gemma-3-4b-it"
-  - "gemma-3-12b-it"
+  - "gpt-4o-mini"
   - "gemma-3-27b-it"
+  # - "gemini-2.5-flash-lite"
 datasets:
   - name: "PBMC3kToy"
     path: "toy_data"

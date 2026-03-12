@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from transcribe.config import logger
+from transcribe.config import logger, DEFAULT_MODEL_NAME
 import scanpy as sc
 import pandas as pd
 from transcribe.processing.inference_engine import run_analysis
@@ -122,11 +122,12 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
     is_report = (mode == "report") or report_only
     is_infer = mode == "infer"
         
-    provider = config.get("provider", "gemini")
+    # Provider can be specified globally or inferred per model
+    global_provider = config.get("provider")
     models = config.get("models", [])
     if not models:
-        logger.warning("No models specified in YAML.")
-        return
+        logger.info(f"No models specified in YAML. Falling back to default model: {DEFAULT_MODEL_NAME}")
+        models = [DEFAULT_MODEL_NAME]
         
     datasets = config.get("datasets", [])
     if not datasets:
@@ -175,6 +176,9 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
                         if usage_path:
                             try:
                                 usage_df = pd.read_csv(usage_path, sep="\t", index_col=0)
+                                # Detect orientation: if factors are columns, transpose so factors are rows
+                                if usage_df.shape[1] < usage_df.shape[0]:
+                                    usage_df = usage_df.T
                             except: pass
                         
                         raw_data_path = ds.get("raw_data_path")
@@ -190,7 +194,7 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
                     plot_evaluation_results(
                         modality=modality,
                         adata=adata,
-                        clusters=eval_data.get("clusters", []),
+                        clusters=eval_data.get("clusters", list(eval_data.get("cluster_mapping", {}).keys())),
                         cluster_degs=eval_data.get("cluster_degs", {}),
                         predictions=eval_data.get("inference_results", {}),
                         factorized_type=ds.get("factorized_type", "sc"),
@@ -246,6 +250,9 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
                             if usage_path:
                                 try:
                                     usage_df = pd.read_csv(usage_path, sep="\t", index_col=0)
+                                    # Detect orientation: if factors are columns, transpose
+                                    if usage_df.shape[1] < usage_df.shape[0]:
+                                        usage_df = usage_df.T
                                 except Exception as e:
                                     logger.warning(f"Failed to load usage data from {usage_path}: {e}")
                                     usage_df = None
@@ -262,6 +269,9 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
                             raw_data_path = None
                             factorized_type = "sc"
                         
+                    from transcribe.core.llm_factory import LLMFactory
+                    model_provider = global_provider or LLMFactory.infer_provider(model)
+
                     run_analysis(
                         adata=adata,
                         factorized_df=factorized_df,
@@ -272,7 +282,7 @@ def run_yaml_eval(config_path: str, report_only: bool = False):
                         ground_truth_col=truth_col,
                         dataset_name=ds_name,
                         run_name=run_name,
-                        provider=provider,
+                        provider=model_provider,
                         model_name=model,
                         out_dir=output_base,
                         organism=ds.get("organism", "Human"),

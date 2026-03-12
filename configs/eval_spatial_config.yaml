@@ -5,7 +5,7 @@ output: "results/eval_results"
 num_tries: 1
 
 models:
-  - "gemma-3-12b-it"
+  - "gemma-3-27b-it"
 
 datasets:
   - name: "VisiumSquidpyToy"

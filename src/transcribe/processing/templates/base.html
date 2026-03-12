@@ -37,10 +37,10 @@
 
     <script>
         // ── Data embedded by report_generator.py ──────────────────────────────
-        const EXPERIMENTS = <!--JS_EXPERIMENTS-->;
-        const TRACES = <!--JS_TRACES-->;
-        const EVAL_DATA = <!--JS_EVAL_DATA-->;
-        const ANN_DATA = <!--JS_ANN_DATA-->;
+        const EXPERIMENTS = __JS_EXPERIMENTS__;
+        const TRACES = __JS_TRACES__;
+        const EVAL_DATA = __JS_EVAL_DATA__;
+        const ANN_DATA = __JS_ANN_DATA__;
         // ──────────────────────────────────────────────────────────────────────
 
         // ── Tab system ────────────────────────────────────────────────────────
@@ -163,10 +163,8 @@
             if (_mode === 'dataset') filtered = filtered.filter(e => e.name === _filter);
 
             const cnt = filtered.length;
-            const avgAcc = cnt ? filtered.reduce((s, e) => s + e.accuracy, 0) / cnt : 0;
-            const avgBio = cnt ? filtered.reduce((s, e) => s + e.eval_accuracy, 0) / cnt : 0;
+            const avgBio = cnt ? filtered.reduce((s, e) => s + e.llmaj_accuracy, 0) / cnt : 0;
 
-            _setBadge('badge_acc', avgAcc, cnt);
             _setBadge('badge_bio', avgBio, cnt);
 
             const lbl = document.getElementById('barplot_lbl');
@@ -197,8 +195,8 @@
             if (_mode !== 'all') {
                 if (legend) legend.style.display = 'none';
                 area.innerHTML = filtered.map((e, i) => {
-                    const pct = (e.eval_accuracy * 100).toFixed(1);
-                    const h = Math.max(8, e.eval_accuracy * 195);
+                    const pct = (e.llmaj_accuracy * 100).toFixed(1);
+                    const h = Math.max(8, e.llmaj_accuracy * 195);
                     const bc = COLORS[i % COLORS.length];
                     const lbl = _mode === 'model' ? e.name : e.model;
                     return `<div class="bar-col">
@@ -219,8 +217,8 @@
                     const bars = UNIQ_MODELS.map((mName, mIdx) => {
                         const exp = filtered.find(e => e.name === dName && e.model === mName);
                         if (!exp) return '';
-                        const pct = (exp.eval_accuracy * 100).toFixed(0);
-                        const h = Math.max(6, exp.eval_accuracy * 195);
+                        const pct = (exp.llmaj_accuracy * 100).toFixed(0);
+                        const h = Math.max(6, exp.llmaj_accuracy * 195);
                         const bc = COLORS[mIdx % COLORS.length];
                         return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;width:26px;margin:0 2px" title="${mName}: ${pct}%">
                         <div style="font-size:0.63rem;color:${bc};margin-bottom:2px">${pct}</div>

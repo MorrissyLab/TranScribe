@@ -23,25 +23,9 @@ class BaseAgentBuilder:
         """Centralized check for Gemma model family."""
         return "gemma" in model_name.lower()
 
-class GeminiAgentBuilder(BaseAgentBuilder):
-    """Builder for high-capability models (Gemini/OpenAI) using native structural outputs."""
-    def build_structured_chain(self, system_prompt: str, user_prompt: str, output_schema: Type[BaseModel]) -> Any:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("user", user_prompt)
-        ])
-        # Use native tool-calling / structured output
-        return prompt | self.llm.with_structured_output(output_schema)
-
-    def build_string_chain(self, system_prompt: str, user_prompt: str) -> Any:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("user", user_prompt)
-        ])
-        return prompt | self.llm | StrOutputParser()
-
-class GemmaAgentBuilder(BaseAgentBuilder):
-    """Builder for models with limited instructions/tool-calling (Gemma) using Pydantic parsers."""
+class StructuredAgentBuilder(BaseAgentBuilder):
+    """Builder that uses manual JSON formatting and Pydantic parsing for all models."""
+    
     def _get_example_value(self, field_type: Any) -> Any:
         from typing import get_origin, get_args, List, Literal
         origin = get_origin(field_type)
@@ -128,10 +112,41 @@ class GemmaAgentBuilder(BaseAgentBuilder):
         ])
         return prompt | self.llm | StrOutputParser()
 
+class NativeStructuredAgentBuilder(BaseAgentBuilder):
+    """Builder for high-capability models (Gemini/OpenAI) using native structural outputs."""
+    def build_structured_chain(self, system_prompt: str, user_prompt: str, output_schema: Type[BaseModel]) -> Any:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", user_prompt)
+        ])
+        # Use native tool-calling / structured output. 
+        # Explicitly use function_calling/tool_calling to avoid metadata issues with some providers
+        method = "function_calling" if self.provider == "openai" else None
+        return prompt | self.llm.with_structured_output(output_schema, method=method)
+
+    def build_string_chain(self, system_prompt: str, user_prompt: str) -> Any:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("user", user_prompt)
+        ])
+        return prompt | self.llm | StrOutputParser()
+
+class GemmaAgentBuilder(StructuredAgentBuilder):
+    """Builder for Gemma models using manual structured prompting approach."""
+    pass
+
 
 def get_agent_builder(provider: str, model_name: str, temperature: float = 0.1) -> BaseAgentBuilder:
-    """Factory to return the appropriate builder based on model name."""
-    if BaseAgentBuilder.is_gemma_model(model_name):
+    """Factory to return the appropriate builder based on model name and provider capabilities."""
+    name = model_name.lower()
+    
+    # Gemma always uses manual Pydantic parsing
+    if BaseAgentBuilder.is_gemma_model(name):
         return GemmaAgentBuilder(provider, model_name, temperature)
-    # Default to Gemini/Standard behavior
-    return GeminiAgentBuilder(provider, model_name, temperature)
+        
+    # Gemini and OpenAI use native structured output
+    if provider.lower() in ["gemini", "openai"]:
+        return NativeStructuredAgentBuilder(provider, model_name, temperature)
+        
+    # Fallback to structured/manual for everything else
+    return StructuredAgentBuilder(provider, model_name, temperature)

@@ -237,7 +237,16 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
             elif final_states:
                 final_state = final_states[-1]
                 
-            traces[cid_str] = [msg.model_dump() if hasattr(msg, 'model_dump') else (msg.dict() if hasattr(msg, 'dict') else msg) for msg in final_state.get("messages", [])] if final_state else []
+            # Safer trace serialization to avoid Pydantic v2 metadata warnings
+            if final_state and "messages" in final_state:
+                traces[cid_str] = []
+                for msg in final_state["messages"]:
+                    if hasattr(msg, 'content'):
+                        traces[cid_str].append({"role": getattr(msg, 'type', 'unknown'), "content": msg.content})
+                    else:
+                        traces[cid_str].append(str(msg))
+            else:
+                traces[cid_str] = []
             
             if ann:
                 predictions[cid_str] = ann.cell_type
@@ -295,8 +304,7 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     if is_eval:
         acc = accuracy_score(y_true, y_pred)
         eval_acc = sum(eval_matches) / len(eval_matches) if eval_matches else 0
-        logger.info(f"Naive Accuracy Score (Exact Match): {acc:.2f}")
-        logger.info(f"Inference Accuracy Score (Biological Match): {eval_acc:.2f}")
+        logger.info(f"LLMaJ Accuracy Score (Biological Match): {eval_acc:.2f}")
     
     end_ts = time.time()
     end_time_iso = datetime.now().isoformat()
@@ -326,7 +334,7 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
             "modality": modality,
             "factorized_type": factorized_type
         },
-        "metrics": {"accuracy": float(acc), "inference_accuracy": float(eval_acc)},
+        "metrics": {"llmaj_accuracy": float(eval_acc)},
         "cluster_mapping": cluster_mapping,
         "cluster_degs": cluster_degs,
         "raw_results": raw_results,

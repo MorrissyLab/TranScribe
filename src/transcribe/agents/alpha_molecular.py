@@ -17,6 +17,7 @@ def create_alpha_agent(provider: str = "gemini", model_name: str = "gemini-2.5-f
         "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease). "
         "If the Disease State is 'Cancer', you MUST consider the tumor microenvironment (TME) context, "
         "including immune infiltration, stromal components, and tumor-specific states. "
+        "If the Disease State is 'Normal', you MUST prioritize identifying standard physiological cell types and resident populations characteristic of healthy tissue. "
         "Always aim for fine-grained cell subtypes (e.g., 'CD8+ Effector T-cell' instead of just 'T-cell') "
         "whenever the marker evidence supports it. "
         "If there is any ambiguity, you MUST propose multiple candidates in your list "

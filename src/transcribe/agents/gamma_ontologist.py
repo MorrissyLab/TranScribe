@@ -16,8 +16,6 @@ def create_gamma_agent(provider: str = "gemini", model_name: str = "gemini-2.5-f
         "select the most biologically plausible one based on all available evidence "
         "(transcriptomics, spatial context, and metadata). "
         "You MUST evaluate the provided biological metadata (Organism, Tissue, Disease). "
-        "IMPORTANT: If the Disease State is 'Cancer', you MUST consider the tumor microenvironment (TME) context, "
-        "including immune infiltration, stromal components, and tumor-specific states. "
         "Always aim for fine-grained cell subtypes (e.g., 'CD8+ Effector T-cell' instead of just 'T-cell') "
         "whenever the evidence supports it. "
         "For your confidence rating, you MUST output one of 'high', 'medium', or 'low'."

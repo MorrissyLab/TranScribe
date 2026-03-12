@@ -1,7 +1,6 @@
 # TranScribe Factorized Evaluation Configuration
 
 mode: "eval"
-provider: "gemini"
 output: "results/eval_results"
 num_tries: 1
 
@@ -17,5 +16,6 @@ datasets:
     tissue: "Sarcoma"
     disease: "Cancer"
     ground_truth_path: "data/factorized/random_ground_truth.csv"
+    usage: "data/factorized/moh_sarcoma_cnmf.usages.k_10.dt_0_1.consensus.txt"
     # To overlay factors on raw spatial/sc data, provide the h5ad path here:
-    # raw_data_path: "data/factorized/raw_data.h5ad"
+    raw_data_path: "Z:\\University of Calgary\\Morrissy Lab - Documents\\MOH_MultiOmics\\cnmf_analysis\\cNMF_results\\moh_sarcoma_cnmf.h5ad"

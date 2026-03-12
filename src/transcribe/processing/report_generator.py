@@ -69,8 +69,7 @@ def _load_dataset(item: Path) -> Optional[dict]:
     return {
         "run_id":          item.name.replace(" ", "_").replace(".", "_").replace("-", "_").lower(),
         "name":            data.get("dataset_name", item.name),
-        "accuracy":        metrics.get("accuracy", 0.0),
-        "eval_accuracy":   metrics.get("inference_accuracy", metrics.get("accuracy", 0.0)),
+        "llmaj_accuracy":  metrics.get("llmaj_accuracy", metrics.get("inference_accuracy", metrics.get("accuracy", 0.0))),
         "mapping":         data.get("cluster_mapping", {}),
         "degs":            data.get("cluster_degs", {}),
         "raw":             data.get("raw_results", {}),
@@ -80,6 +79,7 @@ def _load_dataset(item: Path) -> Optional[dict]:
         "umap_path":       f"{item.name}/umap_predicted.png" if umap_path.exists() else None,
         "spatial_path":    f"{item.name}/spatial_predicted.png" if spatial_path.exists() else None,
         "metadata":        data.get("metadata", {}),
+        "dir_name":        item.name
     }
 
 
@@ -125,12 +125,8 @@ def _summary_tab(datasets: List[dict]) -> str:
         badges_html = """
             <div style="display:flex;gap:30px;justify-content:center;margin-top:16px;flex-wrap:wrap">
                 <div style="text-align:center">
-                    <div style="font-size:.85rem;color:#8b949e;margin-bottom:6px">Avg Naive Accuracy</div>
-                    <div id="badge_acc" class="badge badge-high" style="font-size:1.7rem;padding:8px 24px">—</div>
-                </div>
-                <div style="text-align:center">
-                    <div style="font-size:.85rem;color:var(--purple);margin-bottom:6px">Avg Biological Accuracy</div>
-                    <div id="badge_bio" class="badge badge-high" style="font-size:1.7rem;padding:8px 24px;border:2px solid var(--purple);background:rgba(188,140,255,.08)">—</div>
+                    <div style="font-size:.85rem;color:var(--purple);margin-bottom:6px">Avg LLMaJ Accuracy</div>
+                    <div id="badge_bio" class="badge badge-high" style="font-size:1.7rem;padding:8px 24px">—</div>
                 </div>
             </div>"""
 
@@ -139,7 +135,7 @@ def _summary_tab(datasets: List[dict]) -> str:
         barplot_html = """
         <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
             <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-                <h3 style="margin:0">Biological Accuracy — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
+                <h3 style="margin:0">LLMaJ Accuracy — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
                 <div style="display:flex;gap:7px;align-items:center">
                     <span style="font-size:0.78rem;color:#8b949e">View by:</span>
                     <button class="btn-toggle filter-btn" onclick="setPlotMode('model',this)">Model</button>
@@ -194,10 +190,10 @@ def _summary_tab(datasets: List[dict]) -> str:
 
 def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -> str:
     run_id   = ds["run_id"]
+    dir_name = ds.get("dir_name", item.name if 'item' in locals() else run_id)
     is_eval  = ds["metadata"].get("is_eval", False)
     meta     = ds["metadata"]
-    acc      = ds["accuracy"]
-    eval_acc = ds["eval_accuracy"]
+    llmaj_acc = ds["llmaj_accuracy"]
     dur      = meta.get("duration_seconds", 0)
     st_raw   = meta.get("start_time", "")
     start_t  = st_raw.split("T")[1].split(".")[0] if "T" in st_raw else "N/A"
@@ -206,12 +202,8 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
 
     acc_html = ""
     if is_eval:
-        ac  = _acc_cls(acc)
-        eac = _acc_cls(eval_acc)
-        acc_html = (
-            f'<span class="badge {ac}" style="padding:4px 13px;font-size:.83rem">Naive: {acc*100:.1f}%</span>'
-            f'&nbsp;<span class="badge {eac}" style="padding:4px 13px;font-size:.83rem;border:1px solid var(--purple);background:rgba(188,140,255,.08)">Bio: {eval_acc*100:.1f}%</span>'
-        )
+        eac = _acc_cls(llmaj_acc)
+        acc_html = f'<span class="badge {eac}" style="padding:4px 13px;font-size:.83rem">LLMaJ: {llmaj_acc*100:.1f}%</span>'
 
     tag_parts = [p for p in [
         meta.get("organism"), meta.get("tissue"), meta.get("disease"),
@@ -309,8 +301,16 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
 
         factor_img_html = ""
         if is_factorized:
-            f_img = ds.get("run_id","") + f"/plots/factor_{cid}_usage.png"
-            factor_img_html = f'<div style="text-align:center;margin-bottom:10px;"><img src="{f_img}" alt="Factor {cid} Usage Plot" style="max-width:100%;border-radius:6px;border:1px solid var(--border);"></div>'
+            f_img_rel = f"{dir_name}/plots/factor_{cid}_usage.png"
+            # We don't have easy access to filesystem here to check existence for every cluster, 
+            # but we can assume if it's factorized, we want to try showing them.
+            # However, to be safe and avoid broken images if they really are missing:
+            factor_img_html = f"""
+            <div style="width:100%; aspect-ratio:1/1; overflow:hidden; border-radius:6px; border:1px solid var(--border); margin-bottom:12px; display:flex; align-items:center; justify-content:center; background:#1e1e1e;">
+                <img src="{f_img_rel}" alt="Factor {cid} Usage Plot" 
+                     style="width:100%; height:100%; object-fit:contain;" 
+                     onerror="this.parentElement.style.display='none'">
+            </div>"""
 
         card_html += f"""
             <div class="cluster-card">
@@ -431,9 +431,8 @@ def generate_html_report(eval_dir: str):
             "run_id":        ds["run_id"],
             "name":          ds["name"],
             "model":         ds["metadata"].get("model_name", "Unknown"),
-            "accuracy":      ds["accuracy"],
-            "eval_accuracy": ds["eval_accuracy"],
-            "is_eval":       ds["metadata"].get("is_eval", False),
+            "llmaj_accuracy": ds["llmaj_accuracy"],
+            "is_eval":        ds["metadata"].get("is_eval", False),
         }
         for ds in datasets
     ], ensure_ascii=True)
@@ -447,10 +446,10 @@ def generate_html_report(eval_dir: str):
         .replace("<!--CSS_LINK-->",       css_tag)
         .replace("<!--SIDEBAR_LINKS-->",  sidebar_links)
         .replace("<!--TAB_CONTENTS-->",   tab_contents)
-        .replace("<!--JS_EXPERIMENTS-->", js_experiments)
-        .replace("<!--JS_TRACES-->",      _safe_json(all_traces))
-        .replace("<!--JS_EVAL_DATA-->",   _safe_json(all_eval))
-        .replace("<!--JS_ANN_DATA-->",    _safe_json(all_ann))
+        .replace("__JS_EXPERIMENTS__",    js_experiments)
+        .replace("__JS_TRACES__",         _safe_json(all_traces))
+        .replace("__JS_EVAL_DATA__",      _safe_json(all_eval))
+        .replace("__JS_ANN_DATA__",       _safe_json(all_ann))
     )
 
     out_path = base_dir / "index.html"

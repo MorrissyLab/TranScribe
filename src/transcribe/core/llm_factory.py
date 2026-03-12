@@ -52,6 +52,17 @@ class LLMFactory:
         return factory
 
     @classmethod
+    def infer_provider(cls, model_name: str) -> str:
+        """Infers the appropriate provider based on the model name."""
+        name = model_name.lower()
+        if name.startswith(("gpt-", "o1-")):
+            return "openai"
+        if name.startswith(("gemini-", "gemma-")):
+            return "gemini"
+        # Default or fallback cases could be added here
+        return "openai" # Default to openai if unsure, or raise error
+
+    @classmethod
     def get_llm(cls, provider_name: str, model_name: str, temperature: float = 0.1) -> Any:
         """Retrieves a cached LLM instance or creates a new one."""
         cache_key = (provider_name.lower(), model_name, temperature)

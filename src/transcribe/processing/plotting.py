@@ -64,12 +64,20 @@ def plot_evaluation_results(
                 os.makedirs(plots_dir, exist_ok=True)
                 
                 for cid_str in clusters:
-                    logger.debug(f"Generating plot for factor {cid_str}...")
+                    logger.info(f"Generating plot for factor {cid_str}...")
                     score_col = f"Factor_{cid_str}"
                     
-                    if usage_df is not None and cid_str in usage_df.index:
+                    # Robust index matching (str vs int)
+                    idx_match = None
+                    if usage_df is not None:
+                        if cid_str in usage_df.index:
+                            idx_match = cid_str
+                        elif str(cid_str).isdigit() and int(cid_str) in usage_df.index:
+                            idx_match = int(cid_str)
+                    
+                    if idx_match is not None:
                         # Use exact usage weights
-                        weights = usage_df.loc[cid_str]
+                        weights = usage_df.loc[idx_match]
                         # Match usage cells/spots index to adata.obs index
                         common_cells = weights.index.intersection(adata.obs_names)
                         adata.obs[score_col] = 0.0
@@ -101,10 +109,22 @@ def plot_evaluation_results(
                         sc.pl.spatial(adata, color=score_col, ax=ax, library_id=lib_id, show=False)
                         plot_filename = f"factor_{cid_str}_usage.png"
                     else:
-                        sc.pl.umap(adata, color=score_col, show=False)
+                        # Ensure UMAP coordinates exist
+                        if 'X_umap' not in adata.obsm:
+                            logger.warning(f"No UMAP coordinates found for {cid_str}. Attempting to compute UMAP...")
+                            try:
+                                if 'neighbors' not in adata.uns:
+                                    sc.pp.neighbors(adata)
+                                sc.tl.umap(adata)
+                            except Exception as e:
+                                logger.error(f"Failed to compute UMAP for {cid_str}: {e}")
+                                continue
+                        
+                        fig, ax = plt.subplots()
+                        sc.pl.umap(adata, color=score_col, ax=ax, show=False)
                         plot_filename = f"factor_{cid_str}_usage.png"
                     
-                    plt.title(f"{actual_run_name} - {cid_str} ({predictions.get(cid_str,'')})")
+                    plt.title(f"Factor {cid_str}")
                     plt.tight_layout()
                     plt.savefig(f"{plots_dir}/{plot_filename}", bbox_inches="tight")
                     plt.close()
