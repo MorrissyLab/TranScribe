@@ -1,4 +1,4 @@
-﻿# TranScribe
+# TranScribe
 
 **Automated Cell-Type Annotation via Multi-Agent LLM Orchestration**
 
@@ -12,6 +12,7 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 - **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode, providing Agent Alpha with deep functional context beyond raw gene weights.
 - **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
+- **CellxGene WMG Integration**: High-fidelity cell-type matching using the official CZ CellxGene Census (50M+ reference cells).
 - **Interactive Reports**: Rich HTML dashboards with sticky UMAPs, **Spatial Plots**, trace logs, and reasoning cards.
 - **CSV Data Export**: One-click summary export for batch runs, capturing experiment names, clusters, predicted cell types, DEGs, and detailed reasoning.
 - **Simplified CLI**: Unified configuration-driven workflow.
@@ -34,14 +35,18 @@ graph TD
     subgraph "Tools Layer"
         PRE[Scanpy/Squidpy Preprocessing]
         Ann[Anntools: Marker Overlap & Pathways]
+        WMG[CellxGene WMG Annotator]
         H5 --> PRE
         FAC --> Ann
+        CSV --> WMG
+        Ann --> WMG
     end
 
     subgraph "Core Orchestration (Agentic Workflow)"
         PRE --> Alpha[Agent Alpha: Molecular Profiler]
         CSV --> Alpha
         Ann --> Alpha
+        WMG --> Alpha
         PRE --> Beta[Agent Beta: Spatial Analyst]
     end
 
@@ -64,7 +69,7 @@ graph TD
     classDef database fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
 
     class Alpha,Beta,Gamma,Delta agent;
-    class PRE,Ann,R tool;
+    class PRE,Ann,R,WMG tool;
     class H5,CSV,FAC,GT input;
     class DB database;
 ```
@@ -72,6 +77,7 @@ graph TD
 ### 2. Data Types & Inputs
 - **Single-Cell Input**: Standard `.h5ad` files or standalone **Marker Gene CSV** files (directed to Agent Alpha). Requires a `cluster_col` (Leiden/Louvain) for `.h5ad` inputs.
 - **Factorized Input**: Directly annotate gene weights/spectra from **NMF/cNMF matrix decomposition** (CSV, TSV, TXT formats).
+- **Census Integration**: Standalone **CellxGene WMG** annotator to query 50M+ reference cells using cluster-specific marker lists.
 - **Spatial Input**: Visium-style `.h5ad` with `adata.uns['spatial']`. Supported modalities: `single-cell`, `spatial`, `factorized`.
 - **RAG Enrichment (Optional)**: If enabled, Agent Gamma queries a vector database (Pinecone) for the latest cell ontology definitions to resolve ambiguous annotations.
 
@@ -83,7 +89,7 @@ graph TD
 
 TranScribe's orchestration consists of four specialized agents, each with a distinct biological mandate:
 
-- **Agent Alpha (Molecular Profiler)**: Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types. In factorized mode, it leverages **Anntools** outputs (marker overlap and pathway scores) to identify lineage-specific markers and functional states with high precision.
+- **Agent Alpha (Molecular Profiler)**: Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types. In factorized mode, it leverages **Anntools** outputs and **CellxGene WMG** scores to identify lineage-specific markers and functional states with high precision.
 - **Agent Beta (Spatial Analyst)**: Active only in spatial transcriptomics runs. It evaluates the "nichecard" (neighborhood frequencies) of a cluster to determine if Alpha's candidates are spatially plausible (e.g., verifying if a neuron is actually located in a neuronal neighborhood).
 - **Agent Gamma (Ontologist & Critic)**: The final decision-maker. It synthesizes the molecular evidence from Alpha and the spatial critique from Beta, optionally cross-referencing against an external Knowledge Base (RAG), to produce a standardized cell-type annotation.
 - **Agent Delta (The Evaluator)**: Specializes in biological nomenclature. During benchmarks, Delta compares predictions against ground truth labels to determine if they are "biologically equivalent" (e.g., matching "CD14+ Monocyte" with "Monocyte").
@@ -145,10 +151,21 @@ uv run python -m transcribe.cli --data_path data/spatial.h5ad --cluster_col clus
 ```
 
 ### Option C: Batch Factorized Inference
-To annotate all factorization ranks in a given directory natively (e.g., `k_5` to `k_70` from cNMF):
+To annotate all factorization ranks in a directory (e.g., `k_5` to `k_70` from cNMF):
 
 ```bash
 uv run python -m transcribe.cli configs/batch_factorized_config.yaml
+```
+
+### Option D: CellxGene Census Annotation (NEW)
+To perform high-fidelity annotation of a marker-gene Excel file using the CellxGene WMG API:
+
+```bash
+# Basic run
+.venv\Scripts\transcribe.exe annotate-census --excel "path/to/markers.xlsx"
+
+# With Tissue and Organism filters
+.venv\Scripts\transcribe.exe annotate-census --excel "path/to/markers.xlsx" --organism "Human" --tissue "Sarcoma"
 ```
 
 ## 📂 Project Structure

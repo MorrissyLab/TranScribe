@@ -68,5 +68,37 @@ def cli(config: str, mode: str, report_only: bool, data_path: str, cluster_col: 
     
     logger.info(f"Inference complete. Results saved to {out_dir}")
 
+@click.command()
+@click.option('--excel', required=True, type=str, help='Path to gene_results_summary.xlsx')
+@click.option('--output', default=None, type=str, help='Directory to save results.')
+@click.option('--organism', default='Human', type=str, help='Organism name (e.g. Human, Mouse).')
+@click.option('--tissue', default=None, type=str, help='Tissue name (optional filter).')
+def annotate_census(excel: str, output: str, organism: str, tissue: str):
+    """Query CellxGene Census for cell type annotations based on marker genes."""
+    from transcribe.tools.cellxgene_annotator import run_census_annotation
+    setup_logging()
+    
+    excel_path = Path(excel)
+    if not excel_path.exists():
+        logger.error(f"Excel file not found: {excel}")
+        return
+        
+    out_dir = Path(output) if output else None
+    
+    logger.info(f"Starting CellxGene Census annotation for {excel_path}")
+    try:
+        csv_path = run_census_annotation(excel_path, out_dir, organism=organism, tissue=tissue)
+        logger.info(f"CellxGene annotation complete. Results saved to {csv_path}")
+    except Exception as e:
+        logger.error(f"Annotation failed: {e}")
+
+@click.group()
+def main_cli():
+    """TranScribe: Automated Annotation of Transcriptomics via Tri-Agent Framework."""
+    pass
+
+main_cli.add_command(cli, name="run")
+main_cli.add_command(annotate_census, name="annotate-census")
+
 if __name__ == "__main__":
-    cli()
+    main_cli()

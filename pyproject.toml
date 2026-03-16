@@ -33,7 +33,7 @@ dev = [
 ]
 
 [project.scripts]
-transcribe = "transcribe.cli:cli"
+transcribe = "transcribe.cli:main_cli"
 
 [build-system]
 requires = ["setuptools>=61.0.0", "wheel"]
