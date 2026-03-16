@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Optional, List
 from transcribe.config import logger
-from transcribe.tools.exporter import export_summary_to_csv
+from transcribe.tools.exporter import export_summary_to_csv, export_experiment_degs_to_csv, export_batch_degs_to_excel
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +412,9 @@ def generate_html_report(eval_dir: str):
             ds = _load_dataset(item)
             if ds:
                 datasets.append(ds)
+                # Export individual CSV for this experiment
+                csv_deg_path = item / "degs.csv"
+                export_experiment_degs_to_csv(ds, csv_deg_path)
 
     if not datasets:
         logger.warning("No eval_report.json files found – report not generated.")
@@ -455,9 +458,12 @@ def generate_html_report(eval_dir: str):
     out_path = base_dir / "index.html"
     out_path.write_text(html, encoding="utf-8")
     
-    # Export CSV
+    # Export CSV summary
     csv_path = base_dir / "summary_results.csv"
     export_summary_to_csv(datasets, csv_path)
+    
+    # Export Batch Excel
+    export_batch_degs_to_excel(datasets, base_dir)
 
     logger.info(f"HTML report written to {out_path}")
     logger.info(f"[TranScribe] Report generated: {out_path}")
