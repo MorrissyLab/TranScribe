@@ -213,6 +213,20 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
     ] if p]
     tag_line = " · ".join(tag_parts)
 
+    # Singleton Warning
+    singleton_warning = ""
+    singletons = meta.get("singleton_clusters", [])
+    if singletons:
+        singletons_str = ", ".join([f"<code>{s}</code>" for s in singletons])
+        singleton_warning = f"""
+        <div style="background:rgba(255,165,0,0.1); border:1px solid rgba(255,165,0,0.3); border-radius:8px; padding:12px 16px; margin-bottom:20px; color:#ffca28; display:flex; align-items:center; gap:12px">
+            <span style="font-size:1.5rem">⚠️</span>
+            <div style="font-size:0.85rem; line-height:1.4">
+                <strong>Singleton Cluster Warning:</strong> Cluster(s) {singletons_str} have fewer than 2 cells and were 
+                excluded from differential expression (DEG) computation. They are still included in the final annotation results.
+            </div>
+        </div>"""
+
     # Plot
     plot_html = ""
     is_factorized = meta.get("modality") == "factorized"
@@ -347,6 +361,8 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
             <div style="font-size:.76rem;color:#6e7681;margin:6px 0">{tag_line}</div>
             <div style="font-size:.8rem;margin-bottom:10px">Path: <code style="color:#8b949e">{meta.get('data_path','N/A')}</code></div>
         </div>
+
+        {singleton_warning}
 
         <div class="stats-row">
             <div class="stat-tile"><div class="stat-label">Duration</div><div class="stat-value">{dur:.1f}s</div></div>

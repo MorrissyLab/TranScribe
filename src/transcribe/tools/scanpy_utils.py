@@ -9,12 +9,30 @@ from transcribe.config import logger
 # Note: The user manually added multiple import blocks. 
 # We consolidate them here while keeping the logic intact.
 
-def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str]]:
-    """Compute DEGs once for all clusters and return a mapping of {cluster_id: [genes]}."""
+def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> tuple:
+    """Compute DEGs once for all clusters and return a tuple of:
+       - mapping of {cluster_id: [genes]}
+       - list of singleton cluster IDs excluded from DEG computation
+    """
     
     # 1. Ensure cluster column is categorical
     if not isinstance(adata.obs[cluster_col].dtype, pd.CategoricalDtype):
         adata.obs[cluster_col] = adata.obs[cluster_col].astype(str).astype('category')
+    
+    # 1b. Identify singleton clusters (< 2 cells) that crash t-test
+    cluster_counts = adata.obs[cluster_col].value_counts()
+    small_clusters = [str(c) for c in cluster_counts[cluster_counts < 2].index.tolist()]
+    
+    if small_clusters:
+        logger.warning(
+            f"Excluding {len(small_clusters)} singleton cluster(s) from DEG computation "
+            f"(< 2 cells): {small_clusters}"
+        )
+        mask = ~adata.obs[cluster_col].isin(small_clusters)
+        adata_for_degs = adata[mask].copy()
+        adata_for_degs.obs[cluster_col] = adata_for_degs.obs[cluster_col].cat.remove_unused_categories()
+    else:
+        adata_for_degs = adata
     
     # 2. Compute DEGs if not already present for this column
     params = adata.uns.get('rank_genes_groups', {}).get('params', {})
@@ -23,12 +41,14 @@ def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                sc.tl.rank_genes_groups(adata, cluster_col, method='t-test', use_raw=False)
+                sc.tl.rank_genes_groups(adata_for_degs, cluster_col, method='t-test', use_raw=False)
+                # Copy results back to original adata
+                adata.uns['rank_genes_groups'] = adata_for_degs.uns['rank_genes_groups']
                 # Update params after computing
                 params = adata.uns['rank_genes_groups']['params'] 
         except Exception as e:
             logger.error(f"Failed to compute DEGs: {e}")
-            return {}
+            return {}, small_clusters
 
     # 3. Determine the correct gene names index based on 'use_raw'
     use_raw = params.get('use_raw', True)
@@ -50,8 +70,12 @@ def get_all_degs(adata, cluster_col: str, top_n: int = 50) -> Dict[str, List[str
             results[str(group)] = [gene_names[int(idx)] for idx in raw_genes if int(idx) < len(gene_names)]
         else:
             results[str(group)] = raw_genes
+    
+    # 6. Add singleton clusters back with empty gene lists
+    for sc_id in small_clusters:
+        results[sc_id] = []
             
-    return results
+    return results, small_clusters
 
 def get_expression_profile(adata, cluster_col: str, cluster_id: str, genes: List[str]) -> Dict[str, float]:
     """Retrieve the mean expression of specific genes for a given cluster."""

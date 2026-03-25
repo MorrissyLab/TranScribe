@@ -147,8 +147,9 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     
     # Pre-extract all DEGs for AnnData-based modalities (non-factorized)
     all_cluster_degs = {}
+    singleton_clusters = []
     if modality != "factorized":
-        all_cluster_degs = get_all_degs(adata, cluster_col, top_n=50)
+        all_cluster_degs, singleton_clusters = get_all_degs(adata, cluster_col, top_n=50)
     
     pbar = tqdm(clusters, desc=f"Annotating {dataset_name}")
     for cluster_id in pbar:
@@ -332,7 +333,8 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
             "disease": disease,
             "num_tries": num_tries,
             "modality": modality,
-            "factorized_type": factorized_type
+            "factorized_type": factorized_type,
+            "singleton_clusters": singleton_clusters
         },
         "metrics": {"llmaj_accuracy": float(eval_acc)},
         "cluster_mapping": cluster_mapping,
