@@ -79,6 +79,8 @@ def _load_dataset(item: Path) -> Optional[dict]:
         "umap_path":       f"{item.name}/umap_predicted.png" if umap_path.exists() else None,
         "spatial_path":    f"{item.name}/spatial_predicted.png" if spatial_path.exists() else None,
         "metadata":        data.get("metadata", {}),
+        "hierarchical_summary": data.get("hierarchical_summary", {}),
+        "pathway_activity": {cid: r.get("pathway_activity") for cid, r in data.get("raw_results", {}).items() if isinstance(r, dict)},
         "dir_name":        item.name
     }
 
@@ -98,12 +100,16 @@ def _sidebar_link(ds: dict) -> str:
         f'</div>\n'
     )
 
-
 def _summary_tab(datasets: List[dict]) -> str:
     has_eval   = any(d["metadata"].get("is_eval", False) for d in datasets)
     all_infer  = not has_eval
     total_dur  = sum(d["metadata"].get("duration_seconds", 0) for d in datasets)
     avg_dur    = total_dur / len(datasets) if datasets else 0
+    
+    # Calculate global average accuracy
+    eval_ds = [d for d in datasets if d["metadata"].get("is_eval", False)]
+    avg_acc = sum(d["llmaj_accuracy"] for d in eval_ds) / len(eval_ds) if eval_ds else 0.0
+    acc_color = "badge-high" if avg_acc >= 0.8 else ("badge-med" if avg_acc >= 0.5 else "badge-low")
 
     rows = ""
     for ds in datasets:
@@ -122,75 +128,78 @@ def _summary_tab(datasets: List[dict]) -> str:
     # Accuracy badges – only show when there's at least one eval dataset
     badges_html = ""
     if not all_infer:
-        badges_html = """
-            <div style="display:flex;gap:30px;justify-content:center;margin-top:16px;flex-wrap:wrap">
+        badges_html = f"""
+            <div style="display:flex;gap:40px;justify-content:center;margin-top:20px;flex-wrap:wrap">
                 <div style="text-align:center">
-                    <div style="font-size:.85rem;color:var(--purple);margin-bottom:6px">Avg LLMaJ Accuracy</div>
-                    <div id="badge_bio" class="badge badge-high" style="font-size:1.7rem;padding:8px 24px">—</div>
+                    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Avg Biological Accuracy </div>
+                    <div id="badge_bio" class="badge {acc_color}" style="font-size:2.2rem;padding:12px 32px; border-radius:12px">{avg_acc*100:.1f}%</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Total Experiments</div>
+                    <div class="badge" style="background:rgba(255,255,255,0.1);font-size:2.2rem;padding:12px 32px; border-radius:12px">{len(datasets)}</div>
                 </div>
             </div>"""
 
     barplot_html = ""
     if has_eval:
-        barplot_html = """
-        <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-                <h3 style="margin:0">LLMaJ Accuracy — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
-                <div style="display:flex;gap:7px;align-items:center">
-                    <span style="font-size:0.78rem;color:#8b949e">View by:</span>
+        barplot_html = f"""
+        <div style="margin-top:40px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+            <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:20px;flex-wrap:wrap;gap:15px">
+                <h3 style="margin:0; font-size:1.4rem">Biological Performance — <span id="barplot_lbl" style="color:var(--blue)"></span></h3>
+                <div style="display:flex;gap:10px;align-items:center">
+                    <span style="font-size:0.8rem;color:#8b949e">Group By:</span>
                     <button class="btn-toggle filter-btn" onclick="setPlotMode('model',this)">Model</button>
                     <button class="btn-toggle filter-btn" onclick="setPlotMode('dataset',this)">Dataset</button>
-                    <button class="btn-toggle active filter-btn" onclick="setPlotMode('all',this)">All</button>
+                    <button class="btn-toggle active filter-btn" onclick="setPlotMode('all',this)">Overview</button>
                 </div>
             </div>
-            <div id="sec_filters" style="display:flex;gap:8px;justify-content:center;margin-bottom:14px;flex-wrap:wrap"></div>
-            <div id="bar_area" class="bar-area"></div>
-            <div id="bar_legend" style="display:none;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap"></div>
+            <div id="sec_filters" style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;flex-wrap:wrap"></div>
+            <div id="bar_area" class="bar-area" style="height:250px"></div>
+            <div id="bar_legend" style="display:none;justify-content:center;gap:15px;padding:15px;flex-wrap:wrap"></div>
         </div>"""
 
-    heading = "Overall Inference Summary" if all_infer else "Overall Evaluation Summary"
-    run_label = "Runs" if all_infer else "Experiments"
-
+    heading = "Multi-Agent Evaluation Dashboard" if not all_infer else "Multi-Agent Annotation Dashboard"
     perf = f"""
-        <div style="margin-top:26px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-            <h3 style="border-bottom:1px solid var(--border);padding-bottom:11px;margin-bottom:16px">Run Performance</h3>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
-                <div class="stat-tile"><div class="stat-label">Avg Duration</div>
-                    <div class="stat-value" style="color:var(--blue)">{avg_dur:.1f}s</div></div>
-                <div class="stat-tile"><div class="stat-label">Total Run Time</div>
-                    <div class="stat-value" style="color:var(--purple)">{total_dur:.1f}s</div></div>
-                <div class="stat-tile"><div class="stat-label">{run_label}</div>
-                    <div class="stat-value">{len(datasets)}</div></div>
+        <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px; display:grid; grid-template-columns: 1fr 2fr; gap:24px">
+            <div>
+                <h3 style="border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px; font-size:1.1rem">Global Stats</h3>
+                <div style="display:grid;grid-template-columns:1fr;gap:12px">
+                    <div class="stat-tile"><div class="stat-label">Total Execution Time</div>
+                        <div class="stat-value" style="color:var(--purple)">{total_dur:.2f}s</div></div>
+                    <div class="stat-tile"><div class="stat-label">Avg Duration / Exp</div>
+                        <div class="stat-value" style="color:var(--blue)">{avg_dur:.2f}s</div></div>
+                </div>
+            </div>
+            <div>
+                <h3 style="border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:16px; font-size:1.1rem">Experience Inventory</h3>
+                <table class="data-table">
+                    <thead><tr><th>Dataset Name</th><th>Language Model</th><th>Clusters</th><th>Workflow</th></tr></thead>
+                    <tbody>{rows}</tbody>
+                </table>
             </div>
         </div>"""
 
     return f"""
     <div id="tab_summary" class="tab-pane">
-        <div style="text-align:center;margin-bottom:28px">
-            <div style="display:flex; justify-content:center; align-items:center; gap:20px; margin-bottom:10px">
-                <h1 style="margin:0">{heading}</h1>
-                <a href="summary_results.csv" class="btn btn-purple" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px">
-                    <span>📥</span> Export CSV
+        <div style="text-align:center;margin-bottom:34px">
+            <div style="display:flex; justify-content:center; align-items:center; gap:25px; margin-bottom:15px">
+                <h1 style="margin:0; font-size:2.5rem; letter-spacing:-1px">{heading}</h1>
+                <a href="summary_results.csv" class="btn btn-purple" style="text-decoration:none; padding:10px 20px; font-size:1rem; display:inline-flex; align-items:center; gap:8px">
+                    <span>📊</span> Export Full Results
                 </a>
             </div>
             {badges_html}
         </div>
 
         {barplot_html}
-
-        <table class="data-table" style="margin-top:28px">
-            <thead><tr><th>Dataset</th><th>Model</th><th>Clusters</th><th>Type</th></tr></thead>
-            <tbody>{rows}</tbody>
-        </table>
-
         {perf}
     </div>
     """
 
 
-def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -> str:
+def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict, all_pathway: dict, all_zeta: dict) -> str:
     run_id   = ds["run_id"]
-    dir_name = ds.get("dir_name", item.name if 'item' in locals() else run_id)
+    dir_name = ds.get("dir_name", run_id)
     is_eval  = ds["metadata"].get("is_eval", False)
     meta     = ds["metadata"]
     llmaj_acc = ds["llmaj_accuracy"]
@@ -257,6 +266,26 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
         if plot_path:
             plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
 
+    # Eta Hierarchical Summary
+    eta_html = ""
+    eta_summary = ds.get("hierarchical_summary")
+    if eta_summary and eta_summary.get("groups"):
+        groups_html = ""
+        for g in eta_summary.get("groups", []):
+            cl_list = g.get('member_clusters', [])
+            cl_str = ", ".join([f"<code>{c}</code>" for c in cl_list])
+            groups_html += f"<li><strong>{g.get('group_name')}</strong> (Parent: {g.get('parent_group')}): Clusters [{cl_str}] &mdash; <span style='color:#8b949e'>{g.get('description')}</span></li>"
+        
+        gamma_trace_key = f"{run_id}___GLOBAL_GAMMA__"
+        all_traces[gamma_trace_key] = ds["traces"].get("__GLOBAL_GAMMA__", [])
+
+        eta_html = f"""
+        <div style="font-size:0.9rem;line-height:1.5;margin-bottom:12px;">{eta_summary.get("narrative_summary", "")}</div>
+        <ul style="font-size:0.85rem;line-height:1.5;margin:0;padding-left:20px;">
+            {groups_html}
+        </ul>
+        """
+
     # Cluster rows + cards
     tbl_rows  = ""
     card_html = ""
@@ -272,19 +301,31 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
         raw_ann  = ds["raw"].get(cid, {})
         if isinstance(raw_ann, str):
             confidence, reasoning = "low", raw_ann
+            zeta_data, pathway_data = None, None
         elif isinstance(raw_ann, dict):
             confidence = raw_ann.get("confidence", "low")
             reasoning  = raw_ann.get("reasoning_chain", "N/A")
+            zeta_data  = raw_ann.get("confidence_assessment")
+            pathway_data = raw_ann.get("pathway_activity")
         else:
-            confidence, reasoning = "low", "N/A"
+            confidence, reasoning, zeta_data, pathway_data = "low", "N/A", None, None
 
         key = f"{run_id}_{cid}"
         all_traces[key] = ds["traces"].get(cid, [])
         all_eval[key]   = ev_res
         all_ann[key]    = reasoning
+        all_pathway[key]= pathway_data
+        all_zeta[key]   = zeta_data
 
-        conf_badge = _conf_badge(confidence)
-        bar_w      = _conf_bar_width(confidence)
+        display_conf = confidence
+        if zeta_data and "overlap_score" in zeta_data:
+            display_conf = zeta_data["overlap_score"]
+            
+        conf_badge = _conf_badge(display_conf)
+        bar_w      = _conf_bar_width(display_conf)
+        
+        # Wrap badge to be clickable for Zeta details
+        conf_badge_clickable = f'<div style="cursor:pointer; display:inline-block; transition: opacity 0.2s" onclick="openZeta(\'{key}\')" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1" title="Click to view Zeta reasoning">{conf_badge}</div>'
         genes5     = ds["degs"].get(cid, [])[:5]
         genes_html = "".join(f'<span class="gene-chip">{g}</span>' for g in genes5)
         pred_color = "white" if (is_match or not is_eval) else "#f85149"
@@ -292,8 +333,9 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
         status_td = f'<td style="text-align:center;font-size:1.1rem">{"✅" if is_match else "❌"}</td>' if is_eval else ""
         truth_td  = f"<td>{true_lbl}</td>" if is_eval else ""
         ann_btn   = f'<button class="btn" onclick="openAnnotation(\'{key}\')">Ann. Reason</button>'
-        trace_btn = f'<button class="btn" onclick="openTrace(\'{key}\',\'Cluster {cid} Trace\')">Trace</button>'
+        trace_btn = f'<button class="btn" onclick="openTrace(\'{key}\')">Trace</button>'
         bio_btn   = f'<button class="btn btn-purple" onclick="openBioMatch(\'{key}\')">Bio-Match</button>' if is_eval else ""
+        pathway_btn = f'<button class="btn btn-purple" style="background:rgba(210,153,34,0.15);color:#d29922;border:1px solid #d29922" onclick="openPathway(\'{key}\')">Pathway Activity</button>' if pathway_data else ""
 
         tbl_rows += f"""
             <tr>
@@ -301,9 +343,9 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
                 <td><code>{cid}</code></td>
                 {truth_td}
                 <td style="color:{pred_color}">{dot}{pred_lbl}</td>
-                <td>{conf_badge}</td>
+                <td>{conf_badge_clickable}</td>
                 <td>{genes_html}</td>
-                <td style="display:flex;flex-direction:column;gap:5px">{ann_btn}{trace_btn}{bio_btn}</td>
+                <td style="display:flex;flex-direction:column;gap:5px">{ann_btn}{pathway_btn}{trace_btn}{bio_btn}</td>
             </tr>"""
 
         # Card
@@ -326,22 +368,29 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
                      onerror="this.parentElement.style.display='none'">
             </div>"""
 
+        zeta_html = ""
+        if zeta_data:
+             overlap = zeta_data.get('overlap_score', 0)
+             narrative = zeta_data.get('agreement_narrative', '')
+             z_col = "#3fb950" if overlap >= 0.7 else ("#d29922" if overlap >= 0.4 else "#f85149")
+             zeta_html = f'<div style="margin-top:10px;padding:10px;border:1px dashed {z_col};border-radius:6px;font-size:0.8rem;color:#8b949e"><strong>Zeta Confidence Score:</strong> <span style="color:{z_col};font-weight:bold">{overlap:.2f}</span><br>{narrative}</div>'
+
         card_html += f"""
             <div class="cluster-card">
                 {factor_img_html}
                 <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:9px">
                     <span style="font-size:1.05rem;font-weight:800;color:#fff">{emo}Cluster {cid}</span>
-                    <span>{conf_badge}</span>
+                    <span>{conf_badge_clickable}</span>
                 </div>
                 <div class="tag-row">
                     {truth_tag}
                     <div class="{pred_tcls}"><span>Pred:</span><span>{dot}{pred_lbl}</span></div>
                 </div>
                 <div class="conf-bar-wrap"><div class="conf-bar" style="width:{bar_w}%"></div></div>
-                <div class="reasoning"><strong>Reason:</strong><br>{reasoning}</div>
+                <div class="reasoning"><strong>Reason:</strong><br>{reasoning}{zeta_html}</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto">
                     <button class="btn" onclick="toggleElement('genes_{key}')">DEGs</button>
-                    {trace_btn}{bio_btn}
+                    {pathway_btn}{trace_btn}{bio_btn}
                 </div>
                 <div id="genes_{key}" class="genes-list hidden">{genes_all}</div>
             </div>"""
@@ -350,19 +399,13 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
     truth_th  = "<th>Ground Truth</th>" if is_eval else ""
     thead     = f"<tr>{status_th}<th>C</th>{truth_th}<th>Predicted</th><th>Conf.</th><th>Top DEGs</th><th>Actions</th></tr>"
 
-    grid_class = "experiment-grid" if plot_html else ""
-    left_div = f'<div class="experiment-left">{plot_html}</div>' if plot_html else ""
-    right_class = "experiment-right" if plot_html else "experiment-full"
-
     return f"""
     <div id="tab_exp_{run_id}" class="tab-pane">
         <div style="text-align:center;margin-bottom:22px">
-            <h1>{ds['name']} <span style="font-size:1.05rem;color:#8b949e">({model})</span></h1>
+            <h1 style="font-size:2rem">{ds['name']} <span style="font-size:1.1rem;color:#8b949e;font-weight:400">| {model}</span></h1>
             <div style="font-size:.76rem;color:#6e7681;margin:6px 0">{tag_line}</div>
             <div style="font-size:.8rem;margin-bottom:10px">Path: <code style="color:#8b949e">{meta.get('data_path','N/A')}</code></div>
         </div>
-
-        {singleton_warning}
 
         <div class="stats-row">
             <div class="stat-tile"><div class="stat-label">Duration</div><div class="stat-value">{dur:.1f}s</div></div>
@@ -371,23 +414,43 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict) -
             <div class="stat-tile" style="display:flex;flex-direction:column;gap:6px;align-items:center">{acc_html}</div>
         </div>
 
-        <div class="{grid_class}">
-            {left_div}
-            <div class="{right_class}">
+        {singleton_warning}
+
+        <div class="experiment-grid">
+            <!-- LEFT PANEL: TABLE & CARDS -->
+            <div class="experiment-left">
                 <div class="view-toggle-row">
                     <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
                     <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>
                 </div>
 
-                <div id="tbl_{run_id}" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px">
-                    <h3 style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px">Cluster Details</h3>
+                <div id="tbl_{run_id}" style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2)">
+                    <h3 style="margin-bottom:16px; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 10px">Cluster Inventory</h3>
                     <table class="data-table">
                         <thead>{thead}</thead>
                         <tbody>{tbl_rows}</tbody>
                     </table>
                 </div>
 
-                <div id="cards_{run_id}" class="cluster-grid" style="display:none">{card_html}</div>
+                <div id="cards_{run_id}" class="cluster-grid" style="display:none">
+                    {card_html}
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: PLOTS & ETA SUMMARY -->
+            <div class="experiment-right">
+                <div class="umap-wrap">
+                    <h3 style="margin-bottom:12px; font-size: 1rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px">Visualization</h3>
+                    {plot_html if plot_html else '<div style="padding:40px; background:rgba(255,255,255,0.02); border-radius:12px; border:1px dashed var(--border); text-align:center; color:#484f58">No Plots Available</div>'}
+                </div>
+                
+                <div class="eta-summary-box">
+                    <h3>Dataset Biological Insight | Agent Eta</h3>
+                    {eta_html if eta_html else '<div style="color:#484f58; font-style:italic">No hierarchical summary available for this experiment.</div>'}
+                    <div style="margin-top:15px; border-top:1px solid rgba(188,140,255,0.2); padding-top:12px">
+                        <button class="btn btn-purple" onclick="openTrace('{run_id}___GLOBAL_GAMMA__','Batch Gamma (Final Decision) Trace')">View Batch Gamma Trace</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -439,10 +502,12 @@ def generate_html_report(eval_dir: str):
     all_traces: dict = {}
     all_eval:   dict = {}
     all_ann:    dict = {}
+    all_pathway: dict = {}
+    all_zeta:    dict = {}
 
     sidebar_links  = "".join(_sidebar_link(ds) for ds in datasets)
     summary_pane   = _summary_tab(datasets)
-    experiment_tabs = "".join(_experiment_tab(ds, all_traces, all_eval, all_ann) for ds in datasets)
+    experiment_tabs = "".join(_experiment_tab(ds, all_traces, all_eval, all_ann, all_pathway, all_zeta) for ds in datasets)
     tab_contents   = summary_pane + experiment_tabs
 
     js_experiments = json.dumps([
@@ -463,12 +528,15 @@ def generate_html_report(eval_dir: str):
     html = (
         template
         .replace("<!--CSS_LINK-->",       css_tag)
-        .replace("<!--SIDEBAR_LINKS-->",  sidebar_links)
-        .replace("<!--TAB_CONTENTS-->",   tab_contents)
+        .replace("__SIDEBAR_LINKS__",     sidebar_links)
+        .replace("__SUMMARY_PANE__",       summary_pane)
+        .replace("__EXPERIMENT_TABS__",    experiment_tabs)
         .replace("__JS_EXPERIMENTS__",    js_experiments)
         .replace("__JS_TRACES__",         _safe_json(all_traces))
         .replace("__JS_EVAL_DATA__",      _safe_json(all_eval))
         .replace("__JS_ANN_DATA__",       _safe_json(all_ann))
+        .replace("__JS_PATHWAY_DATA__",   _safe_json(all_pathway))
+        .replace("__JS_ZETA_DATA__",      _safe_json(all_zeta))
     )
 
     out_path = base_dir / "index.html"
@@ -483,3 +551,11 @@ def generate_html_report(eval_dir: str):
 
     logger.info(f"HTML report written to {out_path}")
     logger.info(f"[TranScribe] Report generated: {out_path}")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate TranScribe HTML report.")
+    parser.add_argument("eval_dir", type=str, help="Directory containing experiment subfolders.")
+    args = parser.parse_args()
+    generate_html_report(args.eval_dir)

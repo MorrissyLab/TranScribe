@@ -17,13 +17,19 @@
     padding: 0;
 }
 
+.container {
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+}
+
 body {
     font-family: 'Inter', sans-serif;
     background: var(--bg);
     color: var(--text);
-    display: flex;
-    height: 100vh;
-    overflow: hidden;
+    margin: 0;
+    padding: 0;
 }
 
 h1,
@@ -425,8 +431,8 @@ h3 {
     word-break: break-word;
 }
 
-/* ── Modal ── */
-.modal {
+/* ── Modal Overlay ── */
+.modal-overlay {
     display: none;
     position: fixed;
     inset: 0;
@@ -436,11 +442,11 @@ h3 {
     justify-content: center;
 }
 
-.modal.open {
+.modal-overlay.open {
     display: flex;
 }
 
-.modal-box {
+.modal {
     background: #161b22;
     border: 1px solid var(--border);
     border-radius: 16px;
@@ -543,45 +549,51 @@ h3 {
     }
 }
 
-/* Experiment two-column layout */
+/* Experiment two-column layout: Left (Table/Cards) | Right (Plots/Eta) */
 .experiment-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 32px;
     align-items: start;
     margin-top: 20px;
 }
 
 .experiment-left {
-    position: sticky;
-    top: 20px;
-}
-
-.experiment-left .umap-wrap {
-    margin: 0;
-}
-
-.experiment-left .umap-wrap img {
-    width: 100%;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-}
-
-.experiment-left .umap-wrap h3 {
-    margin-bottom: 10px;
+    min-width: 0;
 }
 
 .experiment-right {
-    min-width: 0;
-    overflow-x: auto;
+    position: sticky;
+    top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
-.experiment-right .data-table {
-    font-size: 0.73rem;
-    table-layout: auto;
+.experiment-right .umap-wrap img {
     width: 100%;
-    word-wrap: normal;
-    overflow-wrap: normal;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.eta-summary-box {
+    background: rgba(188, 140, 255, 0.05);
+    border: 1px solid rgba(188, 140, 255, 0.2);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.eta-summary-box h3 {
+    color: var(--purple);
+    margin-bottom: 12px;
+    font-size: 1rem;
+}
+
+.eta-narrative {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #c9d1d9;
 }
 
 .experiment-right .data-table th,

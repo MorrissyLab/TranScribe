@@ -87,8 +87,19 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     
     metadata = {"organism": organism, "tissue_type": tissue, "disease": disease}
     
+    def _parse_json_block(text: str):
+        cleaned = str(text).strip()
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json", 1)[1].rsplit("```", 1)[0]
+        elif "```" in cleaned:
+            cleaned = cleaned.split("```", 1)[1].rsplit("```", 1)[0]
+        cleaned = cleaned.strip()
+        if "{" in cleaned and "}" in cleaned:
+            cleaned = cleaned[cleaned.find("{"): cleaned.rfind("}") + 1]
+        return json.loads(cleaned)
+    
     from transcribe.core.llm_factory import LLMFactory
-    from transcribe.tools.scanpy_utils import build_nichecard
+    from transcribe.tools.scanpy_utils import build_nichecard, build_umap_proximity
     import json as json_builtin
     
     # Run anntools for factorized mode
@@ -148,10 +159,13 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     # Pre-extract all DEGs for AnnData-based modalities (non-factorized)
     all_cluster_degs = {}
     singleton_clusters = []
+    singleton_clusters = []
     if modality != "factorized":
-        all_cluster_degs, singleton_clusters = get_all_degs(adata, cluster_col, top_n=50)
+        all_cluster_degs, singleton_clusters = get_all_degs(adata, cluster_col, top_n=100)
     
-    pbar = tqdm(clusters, desc=f"Annotating {dataset_name}")
+    phase1_results = {}
+    
+    pbar = tqdm(clusters, desc=f"Phase 1 (Alpha/Epsilon/Beta) for {dataset_name}")
     for cluster_id in pbar:
         # Rate limit protection
         time.sleep(2)
@@ -166,16 +180,19 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         try:
             nichecard = {}
             if modality == "factorized":
-                top_degs, expr_profile = extract_top_factor_markers(factorized_df, cid_str, top_n=50)
+                top_degs, expr_profile = extract_top_factor_markers(factorized_df, cid_str, top_n=100)
                 cluster_degs[cid_str] = top_degs
             else:
                 top_degs = all_cluster_degs.get(cid_str, [])
                 cluster_degs[cid_str] = top_degs
-                expr_profile = get_expression_profile(adata, cluster_col, cid_str, top_degs)
+                expr_profile = get_expression_profile(adata, cluster_col, cid_str, top_degs[:50])
                 
                 if modality == "spatial":
                     nichecard = build_nichecard(adata, cluster_col, cid_str)
                     logger.debug(f"Spatial Nichecard for {cid_str}: {nichecard}")
+                elif modality == "single-cell":
+                    nichecard = build_umap_proximity(adata, cluster_col, cid_str)
+                    logger.debug(f"UMAP Proximity for {cid_str}: {nichecard}")
             
             state_input = {
                  "cluster_id": cid_str,
@@ -193,79 +210,249 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                     top_markers = marker_overlap_df[cid_str].sort_values(ascending=False).head(3).to_dict()
                     state_input["marker_overlap"] = top_markers
 
-            candidate_anns = []
-            final_states = []
+            # Phase 1 Execution
+            logger.info(f"[Agent Call] Phase1 Workflow (Alpha/Epsilon{'/Beta' if modality == 'spatial' else ''}) | cluster={cid_str}")
+            final_state = app.invoke(state_input)
             
-            for attempt in range(num_tries):
-                if attempt > 0:
-                    time.sleep(2)
-                pbar.set_description(f"{status_msg} (Running Gamma/attempt {attempt+1})")
-                logger.debug(f"Invoking app for cluster {cid_str} (attempt {attempt+1})")
-                final_state = app.invoke(state_input)
-                logger.debug(f"App finished for cluster {cid_str}")
-                final_states.append(final_state)
-                if final_state.get("final_annotation"):
-                    candidate_anns.append(final_state.get("final_annotation"))
-            
-            logger.debug(f"Found {len(candidate_anns)} candidates for cluster {cid_str}")
-            ann = None
-            if len(candidate_anns) == 1:
-                ann = candidate_anns[0]
-                final_state = final_states[0]
-            elif len(candidate_anns) > 1:
-                llm = LLMFactory.get_llm(provider, model_name, temperature=0.1)
-                sys_msg = "You are an expert Ontologist. You are given several candidate cell type annotations. Select the best one."
-                usr_msg = f"Tissue: {tissue}\nDisease: {disease}\n\nCandidates:\n"
-                for idx, c in enumerate(candidate_anns):
-                    usr_msg += f"[{idx+1}] Cell Type: {c.cell_type}\nConfidence: {c.confidence}\nReasoning: {c.reasoning_chain}\n\n"
-                usr_msg += "Respond ONLY with the EXACT 'Cell Type' string of the best candidate from the list above. Do not include any other text."
-                
-                try:
-                    from langchain_core.messages import SystemMessage, HumanMessage
-                    from transcribe.agents.agent_factory import BaseAgentBuilder
-                    if BaseAgentBuilder.is_gemma_model(model_name):
-                        combined_msg = HumanMessage(content=f"{sys_msg}\n\n{usr_msg}")
-                        resp = llm.invoke([combined_msg])
-                    else:
-                        resp = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=usr_msg)])
-                    best_cell_type = resp.content.strip()
-                    ann = next((c for c in candidate_anns if c.cell_type.lower() == best_cell_type.lower()), candidate_anns[-1])
-                    final_state = next((s for s, c in zip(final_states, candidate_anns) if c == ann), final_states[-1])
-                except Exception as e:
-                    logger.error(f"Error resolving multiple tries: {e}")
-                    ann = candidate_anns[-1]
-                    final_state = final_states[-1]
-            elif final_states:
-                final_state = final_states[-1]
-                
-            # Safer trace serialization to avoid Pydantic v2 metadata warnings
-            if final_state and "messages" in final_state:
-                traces[cid_str] = []
-                for msg in final_state["messages"]:
-                    if hasattr(msg, 'content'):
-                        traces[cid_str].append({"role": getattr(msg, 'type', 'unknown'), "content": msg.content})
-                    else:
-                        traces[cid_str].append(str(msg))
+            # Extract Epsilon and Beta summaries to include in Phase 2
+            alpha_cand = final_state.get("alpha_candidates", "None")
+            if hasattr(alpha_cand, "candidates"):
+                alpha_text = ", ".join([f"{c.cell_type} ({c.confidence})" for c in alpha_cand.candidates[:3]])
             else:
-                traces[cid_str] = []
-            
-            if ann:
-                predictions[cid_str] = ann.cell_type
-                raw_results[cid_str] = ann.model_dump() if hasattr(ann, 'model_dump') else (ann.dict() if hasattr(ann, 'dict') else ann)
-                pred_msg = f"Predicted {cid_str}: {ann.cell_type}"
-                if is_eval:
-                    logger.debug(f"{pred_msg} | Truth: {true_labels[cid_str]}")
-                else:
-                    logger.debug(pred_msg)
-                pbar.set_postfix({"last_pred": ann.cell_type[:20]})
+                alpha_text = str(alpha_cand)
+                
+            pathway_text = ""
+            pa = final_state.get("pathway_analysis")
+            if pa and hasattr(pa, "biological_summary"):
+                pathway_text = f"Pathways: {', '.join(pa.top_pathways)} | States: {', '.join(pa.suggested_cell_states)}"
             else:
-                predictions[cid_str] = "Unknown"
-                pbar.set_postfix({"last_pred": "Unknown"})
+                pathway_text = str(pa) if pa else "None"
+            
+            beta_text = final_state.get("beta_feedback", "None")
+
+            phase1_results[cid_str] = {
+                "alpha": alpha_text,
+                "epsilon": pathway_text,
+                "epsilon_raw": pa.model_dump() if hasattr(pa, 'model_dump') else (pa.dict() if hasattr(pa, 'dict') else pa) if pa else None,
+                "beta": beta_text,
+                "umap_neighbors": nichecard if modality == "single-cell" else {},
+                "top_degs": top_degs, # Keep full list (up to 100)
+                "messages": final_state.get("messages", [])
+            }
         except Exception as e:
-            logger.error(f"Error evaluating cluster {cid_str}: {e}")
-            predictions[cid_str] = "Error"
-            pbar.set_postfix({"last_pred": "Error"})
+            logger.error(f"Error in Phase 1 for cluster {cid_str}: {e}")
+            phase1_results[cid_str] = {
+                "alpha": "Error", "epsilon": "Error", "beta": "Error", 
+                "umap_neighbors": nichecard if modality == "single-cell" else {},
+                "top_degs": top_degs, "messages": []
+            }
+
+    # Batch Beta for single-cell mode: evaluate UMAP neighborhood context once across all clusters.
+    if modality == "single-cell":
+        logger.info("Running Batch Beta for UMAP proximity reconciliation...")
+        from transcribe.agents.beta_spatial import create_beta_batch_agent
+        beta_batch_agent = create_beta_batch_agent(provider=provider, model_name=model_name)
+        all_clusters_context = ""
+        for cid_str, res in phase1_results.items():
+            all_clusters_context += (
+                f"\n--- CLUSTER {cid_str} ---\n"
+                f"Alpha Candidates: {res.get('alpha', 'None')}\n"
+                f"UMAP Proximity: {res.get('umap_neighbors', {})}\n"
+            )
+        try:
+            logger.info("[Agent Call] Beta (Batch UMAP) | scope=all_clusters")
+            beta_batch_raw = beta_batch_agent.invoke({
+                "organism": metadata.get("organism", "Unknown"),
+                "tissue_type": metadata.get("tissue_type", "Unknown"),
+                "disease": metadata.get("disease", "Unknown"),
+                "all_clusters_context": all_clusters_context
+            })
+            beta_batch_map = _parse_json_block(beta_batch_raw) if isinstance(beta_batch_raw, str) else (beta_batch_raw or {})
+        except Exception as e:
+            logger.warning(f"Batch Beta failed for single-cell mode: {e}")
+            beta_batch_map = {}
+        for cid_str, res in phase1_results.items():
+            cluster_beta = beta_batch_map.get(cid_str, "None")
+            if isinstance(cluster_beta, dict):
+                adherence = cluster_beta.get("contextual_adherence", "Unknown")
+                critique = cluster_beta.get("critique", "No critique.")
+                beta_text = f"Contextual Adherence: {adherence}\nCritique: {critique}"
+            else:
+                beta_text = str(cluster_beta)
+            res["beta"] = beta_text
+            res["messages"].append({
+                "role": "Beta Batch UMAP Critique",
+                "content": beta_text
+            })
+
+    # Phase 2: Batch Gamma
+    logger.info("Running Phase 2: Batch Gamma processing...")
+    from transcribe.agents.gamma_ontologist import create_gamma_agent
+    gamma_agent = create_gamma_agent(provider=provider, model_name=model_name)
+    
+    # Construct massive ALL-CLUSTER evidence prompt
+    all_clusters_evidence = ""
+    for cid_str, res in phase1_results.items():
+        all_clusters_evidence += f"\n--- CLUSTER {cid_str} ---\n"
+        all_clusters_evidence += f"Top DEGs: {', '.join(res['top_degs'])}\n"
+        all_clusters_evidence += f"Alpha (Molecular): {res['alpha']}\n"
+        all_clusters_evidence += f"Epsilon (Pathways): {res['epsilon']}\n"
+        all_clusters_evidence += f"Beta (Spatial/UMAP Context): {res['beta']}\n"
+        
+    rag_context = "None"
+    
+    try:
+        logger.info("[Agent Call] Gamma (Batch Ontologist) | scope=all_clusters")
+        batch_res = gamma_agent.invoke({
+            "organism": metadata.get("organism", "Unknown"),
+            "tissue_type": metadata.get("tissue", "Unknown"),
+            "disease": metadata.get("disease", "Unknown"),
+            "all_clusters_evidence": all_clusters_evidence,
+            "rag_context": rag_context
+        })
+        batch_annotations = batch_res.annotations if hasattr(batch_res, "annotations") else []
+    except Exception as e:
+        logger.error(f"Batch Gamma entirely failed: {e}")
+        batch_annotations = []
+        
+    # Phase 3: Per-result Confidence Assessment
+    logger.info("Running Phase 3: Zeta Confidence Assessment...")
+    from transcribe.agents.zeta_confidence import create_zeta_agent
+    from transcribe.tools.biology_tools import query_marker_database
+    
+    zeta_agent = create_zeta_agent(provider=provider, model_name=model_name)
+    
+    for ann in batch_annotations:
+        cid_str = str(ann.cluster_id)
+        if cid_str not in [str(c) for c in clusters]:
+            continue
             
+        cluster_degs_list = phase1_results.get(cid_str, {}).get("top_degs", [])
+        epsilon_genes = cluster_degs_list[:50]
+        gamma_reasoning = ann.reasoning_chain if hasattr(ann, "reasoning_chain") else ""
+        
+        # Determine expected markers
+        try:
+            # Use .func to call the underlying function of the LangChain tool
+            expected_markers_res = query_marker_database.func(
+                ann.cell_type, 
+                organism=metadata.get("organism", "Human"),
+                tissue=metadata.get("tissue", "PBMC"),
+                provider=provider, 
+                model_name=model_name,
+                gamma_reasoning=gamma_reasoning
+            )
+        except Exception as e:
+            logger.warning(f"Marker database query failed: {e}")
+            expected_markers_res = ["CD4", "CD8A", "MS4A1", "CD14"]
+            
+        # Invoke Zeta
+        try:
+             # Programmatic overlap against the same DEG evidence window used by Epsilon (top 50).
+             epsilon_gene_set = {g.upper() for g in epsilon_genes}
+             found_markers = [m for m in expected_markers_res if str(m).upper() in epsilon_gene_set]
+             calculated_score = len(found_markers) / len(expected_markers_res) if expected_markers_res else 0.0
+             
+             logger.info(f"[Agent Call] Zeta | cluster={cid_str}")
+             zeta_res = zeta_agent.invoke({
+                 "cluster_id": cid_str,
+                 "predicted_cell_type": ann.cell_type,
+                 "gamma_reasoning": gamma_reasoning,
+                 "expected_markers": ", ".join(expected_markers_res),
+                 "observed_degs": ", ".join(epsilon_genes),
+                 "programmatic_score": calculated_score 
+             })
+             
+             # Override LLM score with programmatic one for metrics
+             zeta_res.overlap_score = calculated_score
+             zeta_res.observed_markers = found_markers
+             
+             # We store the full zeta output alongside the raw final annotation
+             ann_dict = ann.model_dump() if hasattr(ann, 'model_dump') else (ann.dict() if hasattr(ann, 'dict') else ann)
+             ann_dict["confidence_assessment"] = zeta_res.model_dump() if hasattr(zeta_res, 'model_dump') else (zeta_res.dict() if hasattr(zeta_res, 'dict') else zeta_res)
+             
+             # Update the confidence based on Zeta's programmatic score
+             if calculated_score > 0.6:
+                 ann.confidence = "high"
+             elif calculated_score > 0.3:
+                 ann.confidence = "medium"
+             else:
+                 ann.confidence = "low"
+        except Exception as e:
+             logger.warning(f"Zeta failed for cluster {cid_str}: {e}")
+             ann_dict = ann.model_dump() if hasattr(ann, 'model_dump') else (ann.dict() if hasattr(ann, 'dict') else ann)
+             
+        predictions[cid_str] = ann.cell_type
+        # Add pathway details for report rendering and detailed activity modal.
+        epsilon_raw = phase1_results.get(cid_str, {}).get("epsilon_raw", None)
+        epsilon_text = phase1_results.get(cid_str, {}).get("epsilon", "")
+        if isinstance(epsilon_raw, dict):
+            pathway_activity = dict(epsilon_raw)
+            pathway_activity.setdefault("summary", epsilon_raw.get("biological_summary", ""))
+            pathway_activity.setdefault("reasoning", epsilon_text or epsilon_raw.get("biological_summary", ""))
+        else:
+            pathway_activity = epsilon_raw
+        ann_dict["pathway_activity"] = pathway_activity
+        raw_results[cid_str] = ann_dict
+        
+        traces[cid_str] = []
+        # Add the 'Cluster Evidence' summary as the very first trace item for visibility
+        traces[cid_str].append({
+            "role": "Cluster Input Evidence", 
+            "content": f"Top 100 DEGs: {', '.join(cluster_degs_list[:20])}... (+{max(0, len(cluster_degs_list)-20)} more)"
+        })
+
+        for msg in phase1_results.get(cid_str, {}).get("messages", []):
+             if isinstance(msg, dict):
+                  traces[cid_str].append(msg)
+             elif hasattr(msg, 'content'):
+                  traces[cid_str].append({"role": getattr(msg, 'type', 'agent'), "content": msg.content})
+             else:
+                  traces[cid_str].append({"role": "info", "content": str(msg)})
+        
+        # Append specific part of Batch Gamma IO for this cluster trace
+        gamma_reasoning = ann.reasoning_chain if hasattr(ann, 'reasoning_chain') else "None"
+        traces[cid_str].append({
+            "role": "Gamma Final Decision", 
+            "content": f"Decision: {ann.cell_type}\nReasoning: {gamma_reasoning}"
+        })
+        
+        # Append Zeta Assessment
+        if "confidence_assessment" in ann_dict:
+            za = ann_dict["confidence_assessment"]
+            traces[cid_str].append({
+                "role": "Zeta Validation",
+                "content": f"Overlap Score: {za.get('overlap_score')}\nNarrative: {za.get('agreement_narrative')}"
+            })
+            
+        traces[cid_str].append({"role": "output", "content": json_builtin.dumps(raw_results[cid_str])})
+        
+        pred_msg = f"Predicted {cid_str}: {ann.cell_type}"
+        if is_eval:
+             logger.debug(f"{pred_msg} | Truth: {true_labels.get(cid_str)}")
+        else:
+             logger.debug(pred_msg)
+             
+    # Fill in any missing predictions for clusters
+    for cluster_id in clusters:
+        cid_str = str(cluster_id)
+        if cid_str not in predictions:
+            predictions[cid_str] = "Unknown"
+            raw_results[cid_str] = "Phase 2 missed this cluster."
+            traces[cid_str] = traces.get(cid_str, [])
+            
+    # Add Global Gamma Trace
+    traces["__GLOBAL_GAMMA__"] = [
+        {
+            "role": "Batch Gamma Input",
+            "content": f"Organism: {metadata.get('organism', 'Unknown')}\n\nEvidence Summary:\n{all_clusters_evidence}"
+        },
+        {
+            "role": "Batch Gamma Output",
+            "content": batch_res.model_dump_json(indent=2) if hasattr(batch_res, 'model_dump_json') else str(batch_res)
+        }
+    ]
+
     # Calculate naive metrics
     y_true = []
     y_pred = []
@@ -273,32 +460,47 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         y_true = [true_labels[str(c)] for c in clusters]
         y_pred = [predictions[str(c)] for c in clusters]
     
-    # Agent Delta Evaluation
+    # Agent Delta Evaluation (Consolidated into one prompt as requested)
     eval_matches = []
+    eval_input = ""
+    batch_eval_res = None
     if is_eval:
         logger.info("Running Agent Delta (Evaluator) for biological reconciliation...")
-        for cluster_id in tqdm(clusters, desc="Biological Correlation (Delta)"):
+        for cluster_id in clusters:
             cid_str = str(cluster_id)
-            true_l = true_labels[cid_str]
-            pred_l = predictions[cid_str]
+            true_l = true_labels.get(cid_str, "Unknown")
+            pred_l = predictions.get(cid_str, "Unknown")
+            degs_ctx = ", ".join(phase1_results.get(cid_str, {}).get("top_degs", [])[:10])
+            eval_input += f"Cluster {cid_str}: Predicted='{pred_l}', Ground Truth='{true_l}', Context='{degs_ctx}'\n"
             
-            if pred_l in ["Error", "Unknown"]:
-                delta_results[cid_str] = {"is_match": False, "explanation": f"Prediction failed: {pred_l}"}
-                eval_matches.append(False)
-                continue
-                
-            try:
-                logger.debug(f"Invoking delta_agent for cluster {cid_str}")
-                match_res = delta_agent.invoke({"true_label": true_l, "predicted_label": pred_l})
-                logger.debug(f"Delta finished for cluster {cid_str}: {match_res.is_match if hasattr(match_res, 'is_match') else '??'}")
-                delta_results[cid_str] = match_res.model_dump() if hasattr(match_res, 'model_dump') else (match_res.dict() if hasattr(match_res, 'dict') else match_res)
-                eval_matches.append(match_res.is_match)
-                logger.debug(f"Delta Match [{cid_str}]: {match_res.is_match} ({true_l} vs {pred_l})")
-            except Exception as e:
-                logger.debug(f"Delta error for cluster {cid_str}: {e}")
-                logger.error(f"Delta error for cluster {cid_str}: {e}")
+        try:
+            logger.info("[Agent Call] Delta (Batch Evaluator) | scope=all_clusters")
+            batch_eval_res = delta_agent.invoke({"eval_input": eval_input})
+            for ev in batch_eval_res.evaluations:
+                cid = str(ev.cluster_id)
+                delta_results[cid] = {
+                    "is_match": ev.is_match,
+                    "explanation": ev.explanation,
+                    "predicted_label": ev.predicted_label,
+                    "true_label": ev.true_label
+                }
+                eval_matches.append(ev.is_match)
+                logger.debug(f"Delta Match [{cid}]: {ev.is_match} ({ev.true_label} vs {ev.predicted_label})")
+        except Exception as e:
+            logger.error(f"Batch Delta failed: {e}")
+            for cid_str in [str(c) for c in clusters]:
                 delta_results[cid_str] = {"is_match": False, "explanation": f"Evaluator Error: {e}"}
                 eval_matches.append(False)
+        traces["__GLOBAL_DELTA__"] = [
+            {
+                "role": "Batch Delta Input",
+                "content": f"Evaluation Pairs:\n{eval_input}"
+            },
+            {
+                "role": "Batch Delta Output",
+                "content": batch_eval_res.model_dump_json(indent=2) if hasattr(batch_eval_res, "model_dump_json") else str(batch_eval_res)
+            }
+        ]
 
     acc = 0.0
     eval_acc = 0.0
@@ -317,6 +519,28 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         cluster_mapping[cid] = {"pred": predictions.get(cid, "Error")}
         if is_eval:
             cluster_mapping[cid]["true"] = true_labels.get(cid, "Unknown")
+            
+    # Phase 4: Post-hoc Dataset Summarization (Eta)
+    logger.info("Running Phase 4: Eta Descriptor Summarization...")
+    from transcribe.agents.eta_descriptor import create_eta_agent
+    eta_agent = create_eta_agent(provider=provider, model_name=model_name)
+    all_annotations_str = ""
+    for cid_str, pred in predictions.items():
+         all_annotations_str += f"Cluster {cid_str}: {pred}\n"
+         
+    try:
+         logger.info("[Agent Call] Eta (Dataset Summarizer) | scope=all_clusters")
+         eta_res = eta_agent.invoke({
+             "organism": metadata.get("organism", "Unknown"),
+             "tissue_type": metadata.get("tissue", "Unknown"),
+             "disease": metadata.get("disease", "Unknown"),
+             "all_annotations": all_annotations_str
+         })
+         hierarchical_summary = eta_res.model_dump() if hasattr(eta_res, 'model_dump') else (eta_res.dict() if hasattr(eta_res, 'dict') else eta_res)
+         logger.debug("Eta Summarization Complete.")
+    except Exception as e:
+         logger.error(f"Eta Summarization failed: {e}")
+         hierarchical_summary = {"groups": [], "narrative_summary": f"Failed: {e}"}
     
     eval_data = {
         "dataset_name": dataset_name,
@@ -341,7 +565,8 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         "cluster_degs": cluster_degs,
         "raw_results": raw_results,
         "inference_results": delta_results,
-        "cluster_colors": cluster_colors
+        "cluster_colors": cluster_colors,
+        "hierarchical_summary": hierarchical_summary
     }
 
     with open(dataset_out_dir / "eval_report.json", "w") as f:

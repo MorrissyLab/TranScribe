@@ -10,37 +10,45 @@
 </head>
 
 <body>
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="sidebar-title">TranScribe</div>
-        <div class="sidebar-section">Overview</div>
-        <div class="tab-link active" id="link_summary" onclick="showTab('tab_summary', this)">Overall Summary</div>
-        <div class="sidebar-section" style="margin-top:8px">Experiments</div>
-        <!--SIDEBAR_LINKS-->
+    <div class="header">
+        <h1>TranScribe <span style="font-weight:300">| Multi-Agent Biology</span></h1>
+        <div style="font-size:0.9rem;color:#8b949e">Benchmark & Annotation Dashboard</div>
     </div>
 
-    <!-- Main Content -->
-    <div class="main-content">
-        <!--TAB_CONTENTS-->
+    <div class="container">
+        <!-- Sidebar Links -->
+        <div class="sidebar">
+            <div class="tab-link active" id="link_summary" onclick="showTab('tab_summary', this)">Overall Summary</div>
+            <h3 style="padding:0 12px; font-size: 0.8rem; text-transform: uppercase; color: #8b949e">Experiments</h3>
+            __SIDEBAR_LINKS__
+        </div>
+
+        <!-- Main Content (Tabs) -->
+        <div class="main-content">
+            __SUMMARY_PANE__
+            __EXPERIMENT_TABS__
+        </div>
     </div>
 
-    <!-- Modal (shared) -->
-    <div id="modal" class="modal" onclick="if(event.target===this)closeModal()">
-        <div class="modal-box">
+    <!-- Modals -->
+    <div id="modalOverlay" class="modal-overlay" onclick="closeModal()">
+        <div class="modal" onclick="event.stopPropagation()">
             <div class="modal-head">
-                <h3 id="modal_title" style="margin:0">Detail</h3>
+                <h3 id="modalTitle">Analysis Trace</h3>
                 <span class="modal-close" onclick="closeModal()">&times;</span>
             </div>
-            <div id="modal_body" class="modal-body"></div>
+            <div id="modalBody" class="modal-body"></div>
         </div>
     </div>
 
     <script>
-        // ── Data embedded by report_generator.py ──────────────────────────────
+        // Tab Data Layer
         const EXPERIMENTS = __JS_EXPERIMENTS__;
         const TRACES = __JS_TRACES__;
         const EVAL_DATA = __JS_EVAL_DATA__;
         const ANN_DATA = __JS_ANN_DATA__;
+        const PATHWAY_DATA = __JS_PATHWAY_DATA__;
+        const ZETA_DATA = __JS_ZETA_DATA__;
         // ──────────────────────────────────────────────────────────────────────
 
         // ── Tab system ────────────────────────────────────────────────────────
@@ -78,46 +86,106 @@
         }
 
         // ── Modal helpers ─────────────────────────────────────────────────────
-        function closeModal() { document.getElementById('modal').classList.remove('open'); }
+        function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
 
         function _showModal(title, bodyHtml) {
-            document.getElementById('modal_title').textContent = title;
-            document.getElementById('modal_body').innerHTML = bodyHtml;
-            document.getElementById('modal').classList.add('open');
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').innerHTML = bodyHtml;
+            document.getElementById('modalOverlay').classList.add('open');
         }
 
-        function openTrace(key, title) {
-            const traces = TRACES[key] || [];
-            if (!traces.length) { _showModal(title, '<div style="color:#8b949e">No trace data available.</div>'); return; }
-            const msgs = traces.map(msg => {
-                const agentCls = (msg.agent || 'system').toLowerCase().split(' ')[0];
-                let content = '';
-                if (msg.input) content += 'Input:\n' + JSON.stringify(msg.input, null, 2) + '\n\n';
-                if (msg.output) content += 'Output:\n' + JSON.stringify(msg.output, null, 2) + '\n\n';
-                if (msg.content) content += typeof msg.content === 'object' ? JSON.stringify(msg.content, null, 2) : msg.content;
-                return `<div class="trace-msg ${agentCls}"><div class="trace-agent">${msg.agent || 'System'} ${msg.type || ''}</div><pre>${content.trim()}</pre></div>`;
-            }).join('');
-            _showModal(title, msgs);
+        function openTrace(key, customTitle) {
+            const trace = TRACES[key] || [];
+            if (!trace.length) { _showModal('Trace', '<div style="color:#8b949e">No trace data available.</div>'); return; }
+            let html = '';
+            trace.forEach(msg => {
+                const role = (msg.role || 'System').toLowerCase();
+                const cls = role.includes('alpha') ? 'alpha' : 
+                          (role.includes('epsilon') ? 'beta' : 
+                          (role.includes('beta') ? 'beta' : 
+                          (role.includes('gamma') ? 'gamma' : 
+                          (role.includes('zeta') ? 'gamma' : 'system'))));
+                let content = msg.content || '';
+                if (typeof content === 'object') content = JSON.stringify(content, null, 2);
+                html += `<div class="trace-msg ${cls}"><div class="trace-agent">${msg.role}</div><pre>${content}</pre></div>`;
+            });
+            _showModal(customTitle || ('Analysis Trace: ' + key), html);
+        }
+
+        function openBatchGamma() {
+            const globalTrace = TRACES['__GLOBAL_GAMMA__'] || [];
+            if (!globalTrace.length) { _showModal('Batch Gamma', 'No global trace found.'); return; }
+            let html = '';
+            globalTrace.forEach(msg => {
+                html += `<div class="trace-msg gamma"><div class="trace-agent">Global ${msg.role}</div><pre>${msg.content}</pre></div>`;
+            });
+            _showModal('Global Batch Gamma Trace', html);
         }
 
         function openBioMatch(key) {
             const res = EVAL_DATA[key];
-            if (!res) { _showModal('Bio-Match', '<div style="color:#8b949e">No evaluation data.</div>'); return; }
+            if (!res) { _showModal('Bio-Match', 'No eval data.'); return; }
             const col = res.is_match ? '#3fb950' : '#f85149';
             const lbl = res.is_match ? '✅ BIOLOGICAL MATCH' : '❌ NOT A MATCH';
             _showModal('Biological Evaluation',
                 `<div style="background:rgba(188,140,255,0.08);padding:18px;border-radius:10px;border:1px solid #bc8cff">
-                <div style="font-size:1rem;margin-bottom:12px;color:${col};font-weight:700">${lbl}</div>
-                <div style="line-height:1.6;font-size:0.88rem">${res.explanation || 'No explanation provided.'}</div>
-             </div>`);
+                    <div style="font-size:1.1rem;margin-bottom:12px;color:${col};font-weight:700">${lbl}</div>
+                    <div style="line-height:1.6;font-size:0.9rem">${res.explanation || 'No explanation.'}</div>
+                 </div>`);
         }
 
         function openAnnotation(key) {
             const reason = ANN_DATA[key];
-            _showModal('Annotation Reasoning',
-                reason
-                    ? `<div style="background:rgba(56,139,253,0.08);padding:18px;border-radius:10px;border:1px solid #58a6ff;line-height:1.6;font-family:monospace;white-space:pre-wrap;font-size:0.82rem">${reason}</div>`
-                    : '<div style="color:#8b949e">No annotation reasoning available.</div>');
+            _showModal('Annotation Reasoning', 
+                `<div class="trace-msg gamma" style="border:1px solid var(--purple)">
+                    <div class="trace-agent">Gamma Ontologist Logic</div>
+                    <pre style="white-space:pre-wrap">${reason || 'N/A'}</pre>
+                 </div>`);
+        }
+
+        function openPathway(key) {
+            const data = PATHWAY_DATA[key];
+            if (!data) { _showModal('Pathway Activity', 'No activity data.'); return; }
+            const summary = data.summary || data.biological_summary || 'Enrichment summary available.';
+            const reasoning = data.reasoning || data.biological_summary || '';
+            const states = data.suggested_cell_states || data.rationales || [];
+            let html = `<div style="padding:15px; background:rgba(210,153,34,0.1); border-radius:10px; border:1px solid #d29922; color:#d29922; margin-bottom:15px">
+                            <strong>Summary:</strong> ${summary}
+                        </div>`;
+            if (reasoning) html += `<h4>Reasoning:</h4><div class="trace-msg system"><pre style="white-space:pre-wrap">${reasoning}</pre></div>`;
+            if (states && states.length) html += '<h4>Suggested States:</h4><ul>' + states.map(r => `<li>${r}</li>`).join('') + '</ul>';
+            if (data.top_pathways) html += '<h4>Top Pathways:</h4><div class="genes-list">' + data.top_pathways.map(p => `<span class="gene-chip">${p}</span>`).join('') + '</div>';
+            _showModal('Pathway Activity | Agent Epsilon', html);
+        }
+
+        function openZeta(key) {
+            const data = ZETA_DATA[key];
+            if (!data) { _showModal('Zeta Validation', 'No validation data.'); return; }
+            const score = data.overlap_score || 0;
+            const col = score >= 0.7 ? '#3fb950' : (score >= 0.4 ? '#d29922' : '#f85149');
+            let html = `
+                <div style="border-left:4px solid ${col}; padding-left:15px; margin-bottom:20px">
+                    <h2 style="color:${col}; margin:0">Quantitative Overlap: ${Math.round(score * 100)}%</h2>
+                    <p style="color:#8b949e; margin-top:5px; font-size:0.9rem">Calculated programmatically based on DEG vs Canonical Markers</p>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px">
+                    <div style="background:rgba(255,255,255,0.03); padding:15px; border-radius:10px">
+                        <strong style="color:var(--blue)">Expected Markers</strong>
+                        <div class="genes-list">${(data.expected_markers || []).map(g => `<span class="gene-chip">${g}</span>`).join('')}</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.03); padding:15px; border-radius:10px">
+                        <strong style="color:var(--green)">Observed Matches</strong>
+                        <div class="genes-list">${(data.observed_markers || []).map(g => `<span class="gene-chip">${g}</span>`).join('')}</div>
+                    </div>
+                </div>
+                <div class="trace-msg gamma" style="border:1px solid var(--purple)">
+                    <div class="trace-agent">Zeta Validation Narrative</div>
+                    <pre style="white-space:pre-wrap">${data.agreement_narrative || 'N/A'}</pre>
+                </div>
+                <div style="margin-top:15px; text-align:right">
+                    <button class="btn btn-purple" onclick="openTrace('${key}')">View Full Cluster Trace</button>
+                </div>`;
+            _showModal('Confidence Assessment | Agent Zeta', html);
         }
 
         // ── Summary page barplot ──────────────────────────────────────────────
@@ -166,10 +234,8 @@
             const avgBio = cnt ? filtered.reduce((s, e) => s + e.llmaj_accuracy, 0) / cnt : 0;
 
             _setBadge('badge_bio', avgBio, cnt);
-
             const lbl = document.getElementById('barplot_lbl');
             if (lbl) lbl.textContent = _mode === 'all' ? 'All Models & Datasets' : _filter;
-
             _drawBars(filtered);
         }
 
@@ -199,18 +265,13 @@
                     const h = Math.max(8, e.llmaj_accuracy * 195);
                     const bc = COLORS[i % COLORS.length];
                     const lbl = _mode === 'model' ? e.name : e.model;
-                    return `<div class="bar-col">
-                    <div class="bar-val" style="color:${bc}">${pct}%</div>
-                    <div class="bar-rect" style="height:${h}px;background:${bc}" onclick="document.getElementById('link_${e.run_id}').click()" title="${lbl}"></div>
-                    <div class="bar-lbl">${lbl}</div></div>`;
+                    return `<div class="bar-col"><div class="bar-val" style="color:${bc}">${pct}%</div><div class="bar-rect" style="height:${h}px;background:${bc}" onclick="document.getElementById('link_${e.run_id}').click()" title="${lbl}"></div><div class="bar-lbl">${lbl}</div></div>`;
                 }).join('');
             } else {
                 if (legend) {
                     legend.style.display = 'flex';
                     legend.innerHTML = UNIQ_MODELS.map((m, i) =>
-                        `<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.05);padding:3px 9px;border-radius:5px">
-                        <div style="width:10px;height:10px;background:${COLORS[i % COLORS.length]};border-radius:3px"></div>
-                        <span style="font-size:0.76rem">${m}</span></div>`
+                        `<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.05);padding:3px 9px;border-radius:5px"><div style="width:10px;height:10px;background:${COLORS[i % COLORS.length]};border-radius:3px"></div><span style="font-size:0.76rem">${m}</span></div>`
                     ).join('');
                 }
                 area.innerHTML = UNIQ_DATASETS.map(dName => {
@@ -220,20 +281,15 @@
                         const pct = (exp.llmaj_accuracy * 100).toFixed(0);
                         const h = Math.max(6, exp.llmaj_accuracy * 195);
                         const bc = COLORS[mIdx % COLORS.length];
-                        return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;width:26px;margin:0 2px" title="${mName}: ${pct}%">
-                        <div style="font-size:0.63rem;color:${bc};margin-bottom:2px">${pct}</div>
-                        <div style="width:100%;height:${h}px;background:${bc};border-radius:4px 4px 0 0;cursor:pointer" onclick="document.getElementById('link_${exp.run_id}').click()"></div></div>`;
+                        return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;width:26px;margin:0 2px" title="${mName}: ${pct}%"><div style="font-size:0.63rem;color:${bc};margin-bottom:2px">${pct}</div><div style="width:100%;height:${h}px;background:${bc};border-radius:4px 4px 0 0;cursor:pointer" onclick="document.getElementById('link_${exp.run_id}').click()"></div></div>`;
                     }).join('');
-                    return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:55px">
-                    <div style="display:flex;align-items:flex-end;height:100%">${bars}</div>
-                    <div style="font-size:0.73rem;text-align:center;color:#8b949e;border-top:1px solid rgba(255,255,255,0.13);padding-top:4px;width:100%">${dName}</div></div>`;
+                    return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:55px"><div style="display:flex;align-items:flex-end;height:100%">${bars}</div><div style="font-size:0.73rem;text-align:center;color:#8b949e;border-top:1px solid rgba(255,255,255,0.13);padding-top:4px;width:100%">${dName}</div></div>`;
                 }).join('');
             }
         }
 
-        // ── Boot ──────────────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
-            // Hide all panes, show only summary initially
+             // Show summary tab by default
             _allPanes().forEach(p => p.style.display = 'none');
             const summary = document.getElementById('tab_summary');
             if (summary) summary.style.display = 'block';

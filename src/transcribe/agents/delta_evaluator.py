@@ -1,36 +1,38 @@
-from typing import Any
 from transcribe.agents.agent_factory import get_agent_builder
-from transcribe.core.schema import EvaluationMatch
+from transcribe.core.schema import BatchEvaluation
 
 def create_delta_agent(provider: str = "gemini", model_name: str = "gemini-2.5-flash-lite", temperature: float = 0.1):
     """
-    Agent Delta: The Evaluator.
+    Agent Delta: The Evaluator (Batched).
     Responsibility: Compare the ground truth label with the predicted label 
-    and determine if they are biologically equivalent (synonyms).
+    for ALL clusters in a single prompt and determine if they match.
     """
     system_prompt = """
     You are Agent Delta, a specialist in single-cell ontology and biological nomenclature.
-    Your task is to evaluate the accuracy of cell type predictions.
+    Your task is to evaluate the accuracy of multiple cell type predictions at once.
     
-    You will be given:
-    1. A 'Ground Truth' label (the known correct cell type).
-    2. A 'Predicted' label (the annotation produced by an AI system).
+    For each cluster, you will be given:
+    1. A 'Ground Truth' label (if available).
+    2. A 'Predicted' label (produced by our multi-agent system).
+    3. 'Input Context' (Top marker genes).
     
-    You must determine if the 'Predicted' label is a correct biological match for the 'Ground Truth'.
-    - Use 'is_match: true' if the labels are synonyms, represent the same lineage at reasonable granularity, 
-      or if the prediction is a correct sub-type or parent-type of the ground truth (e.g., 'Monocyte' and 'CD14+ Monocyte' are matches).
-    - Use 'is_match: false' if they represent fundamentally different lineages (e.g., 'B cell' and 'T cell').
+    You must determine if each 'Predicted' label is a correct biological match for its 'Ground Truth'.
+    If Ground Truth is 'Unknown', evaluate if the 'Predicted' label is consistent with the 'Input Context'.
     
-    Provide a brief explanation for your decision.
+    Match Criteria:
+    - is_match: true if labels are synonyms, lexical variants, parent/child types, maturation-state variants,
+      or otherwise biologically compatible with the same lineage and marker context.
+    - is_match: false if lineages are distinct or discordant with markers.
+    
+    Provide a brief explanation for each cluster. Respond in the requested BatchEvaluation format.
     """
     
     user_prompt = """
-    Evaluate the following pair:
-    Ground Truth: {true_label}
-    Predicted: {predicted_label}
+    Evaluate the following clusters:
+    {eval_input}
     
-    Respond in the requested structured format.
+    Compare Predicted vs Ground Truth/Input for each.
     """
     
     builder = get_agent_builder(provider, model_name, temperature)
-    return builder.build_structured_chain(system_prompt, user_prompt, EvaluationMatch)
+    return builder.build_structured_chain(system_prompt, user_prompt, BatchEvaluation)

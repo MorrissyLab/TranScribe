@@ -2,11 +2,11 @@
 
 **Automated Cell-Type Annotation via Multi-Agent LLM Orchestration**
 
-TranScribe is a high-performance framework that leverages generative AI (Gemma 3, Gemini) to automate cell-type annotation in single-cell (scRNA-seq) and spatial transcriptomics. By orchestrating a tri-agent framework, TranScribe transitions raw gene clusters into deeply understood biological lineages with full transparency and reasoning traces.
+TranScribe is a high-performance framework that leverages generative AI (Gemma 3, Gemini) to automate cell-type annotation in single-cell (scRNA-seq) and spatial transcriptomics. By orchestrating seven specialized agents, TranScribe transitions raw gene clusters into biologically coherent lineage annotations with full transparency and reasoning traces.
 
 ## 🧬 Key Features
 
-- **Tri-Agent Framework**: Alpha (Molecular Profiler), Beta (Spatial Analyst), and Gamma (Ontologist) work in concert.
+- **Seven-Agent Orchestration**: Alpha, Beta, Epsilon, Gamma, Zeta, Eta, and Delta work in a 4-phase pipeline.
 - **Factorized Data Support**: Annotate latent factors from NMF, cNMF, or other matrix decomposition methods.
 - **Batch Factorized Processing**: Automatically discover and annotate all factorization ranks in a directory, outputting to a single tabbed HTML report.
 - **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode, providing Agent Alpha with deep functional context beyond raw gene weights.
@@ -42,18 +42,25 @@ graph TD
         Ann --> WMG
     end
 
-    subgraph "Core Orchestration (Agentic Workflow)"
+    subgraph "Phase 1: Per-Cluster Extraction"
         PRE --> Alpha[Agent Alpha: Molecular Profiler]
         CSV --> Alpha
         Ann --> Alpha
         WMG --> Alpha
-        PRE --> Beta[Agent Beta: Spatial Analyst]
+        PRE --> Beta[Agent Beta: Spatial/UMAP Context]
+        Alpha --> Epsilon[Agent Epsilon: Pathway Analyst]
     end
 
-    subgraph "Final Decision Layer (Agent Gamma)"
-        Alpha --> Gamma[Agent Gamma: Ontologist]
+    subgraph "Phase 2: Full-Context Decision"
+        Alpha --> Gamma[Agent Gamma: Batch Ontologist]
         Beta --> Gamma
+        Epsilon --> Gamma
         DB[(Pinecone/RAG)] -.->|Cell Ontology| Gamma
+    end
+    
+    subgraph "Phase 3 & 4: Validation & Summary"
+        Gamma --> Zeta[Agent Zeta: Confidence]
+        Zeta --> Eta[Agent Eta: Hierarchical Summary]
     end
 
     subgraph "Validation & Reporting"
@@ -85,14 +92,28 @@ graph TD
 - **Inference Pipeline**: Used for new, unannotated data. Outputs best-guess labels with full reasoning chains.
 - **Benchmark Pipeline**: Used for validation. Measures semantic and exact accuracy against ground truth, generating a head-to-head model comparison report.
 
+### 4. Modality-Specific Coordination
+- **Single-cell mode**: Alpha and Epsilon run per cluster, then **Beta runs once in batch** across all clusters using UMAP proximity context before Gamma performs batch finalization.
+- **Spatial mode**: Beta runs per cluster using spatial neighborhood context.
+- **Factorized mode**: Beta is bypassed; Gamma integrates Alpha + Epsilon evidence across all clusters.
+
+### 5. Trace Semantics (HTML Report)
+- **Alpha Input Evidence**: concise molecular evidence (Top DEGs + CellxGene candidates when available).
+- **Epsilon Input / Epsilon Output**: pathway step is recorded in strict input/output form.
+- **Beta Batch UMAP Critique**: shown in single-cell runs when Beta is executed in batch mode.
+- **Global Batch Gamma Trace**: remains available for whole-dataset decision auditing.
+
 ## 🤖 Agent Roles
 
-TranScribe's orchestration consists of four specialized agents, each with a distinct biological mandate:
+TranScribe's orchestration consists of seven specialized agents, executed in a strict 4-phase architecture:
 
-- **Agent Alpha (Molecular Profiler)**: Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types. In factorized mode, it leverages **Anntools** outputs and **CellxGene WMG** scores to identify lineage-specific markers and functional states with high precision.
-- **Agent Beta (Spatial Analyst)**: Active only in spatial transcriptomics runs. It evaluates the "nichecard" (neighborhood frequencies) of a cluster to determine if Alpha's candidates are spatially plausible (e.g., verifying if a neuron is actually located in a neuronal neighborhood).
-- **Agent Gamma (Ontologist & Critic)**: The final decision-maker. It synthesizes the molecular evidence from Alpha and the spatial critique from Beta, optionally cross-referencing against an external Knowledge Base (RAG), to produce a standardized cell-type annotation.
-- **Agent Delta (The Evaluator)**: Specializes in biological nomenclature. During benchmarks, Delta compares predictions against ground truth labels to determine if they are "biologically equivalent" (e.g., matching "CD14+ Monocyte" with "Monocyte").
+- **Agent Alpha (Molecular Profiler)**: Phase 1. Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types.
+- **Agent Beta (Spatial/UMAP Contextualizer)**: Phase 1/Batch bridge. Uses neighborhood context (spatial neighbors or UMAP proximity) to test whether candidate labels are contextually plausible.
+- **Agent Epsilon (Pathway Analyst)**: Phase 1. Parses Gene Ontology (GO) enrichment results to infer active cellular states for each cluster.
+- **Agent Gamma (Batch Ontologist & Critic)**: Phase 2. The central decision-maker. It receives a batch payload of *all* clusters and assigns definitive annotations considering the full tissue landscape.
+- **Agent Zeta (Confidence Assessor)**: Phase 3. Performs programmatic marker overlap calculation (`|observed & expected| / |expected|`) to provide a verifiable confidence score.
+- **Agent Eta (Descriptor)**: Phase 4. Construct a hierarchical biological summary (lineage tree) of the entire experiment.
+- **Agent Delta (The Evaluator)**: Specializes in biological nomenclature comparisons during benchmark runs.
 
 ## 🚀 Getting Started
 

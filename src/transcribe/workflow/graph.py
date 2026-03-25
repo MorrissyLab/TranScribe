@@ -3,40 +3,53 @@ from langgraph.graph import StateGraph, START, END
 from transcribe.core.schema import AgentState
 from transcribe.agents.alpha_molecular import create_alpha_agent
 from transcribe.agents.beta_spatial import create_beta_agent
-from transcribe.agents.gamma_ontologist import create_gamma_agent
+from transcribe.agents.epsilon_pathway import create_epsilon_agent
 from transcribe.tools.rag.retriever import retrieve_rag_context
+from transcribe.tools.cellxgene_annotator import CellxGeneAnnotator
 from transcribe.config import logger, DEFAULT_MODEL_NAME
 
 def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAME, modality: str = "single-cell", use_rag: bool = False, rag_index: str = ""):
     """
     Constructs the LangGraph workflow.
-    - single-cell: Alpha -> Gamma
-    - spatial: Alpha -> Beta -> Gamma
+    - single-cell: Alpha -> Epsilon (Batch Beta is handled later in inference_engine)
+    - spatial: Alpha -> Epsilon -> Beta
     """
     alpha = create_alpha_agent(provider=provider, model_name=model_name)
     beta = create_beta_agent(provider=provider, model_name=model_name)
-    gamma = create_gamma_agent(provider=provider, model_name=model_name)
+    epsilon = create_epsilon_agent(provider=provider, model_name=model_name)
 
     workflow = StateGraph(AgentState)
 
+    # Shared CellxGene annotator instance (lazy-initialized)
+    cellxgene_annotator = None
+
     def run_alpha(state: AgentState):
+        nonlocal cellxgene_annotator
         meta = state.get("metadata", {})
         
         # Build dynamic data payload to omit empty fields
         data_parts = []
-        if state.get("expression_profile"):
-            data_parts.append(f"Expression Profile: {state['expression_profile']}")
-            
         mo = state.get("marker_overlap")
         if mo and str(mo).lower() != "none available":
             data_parts.append(f"Marker Overlap (Top 3 Genesets): {mo}")
-            
-        pe = state.get("pathway_enrichment")
-        if pe and str(pe).lower() != "none available":
-            data_parts.append(f"Pathway Enrichment (Top 10 GO terms): {pe}")
+        
+        # Query CellxGene WMG for population-level evidence
+        cxg_str = "None"
+        try:
+            organism = meta.get("organism", "Human")
+            tissue = meta.get("tissue_type", "Unknown")
+            if cellxgene_annotator is None:
+                cellxgene_annotator = CellxGeneAnnotator(organism=organism)
+            cxg_result = cellxgene_annotator.query(state["top_degs"][:20], tissue=tissue)
+            if cxg_result and cxg_result.get("candidates"):
+                cxg_str = ", ".join([f"{name} ({score:.3f})" for name, score in cxg_result["candidates"][:5]])
+                data_parts.append(f"CellxGene WMG Candidates: {cxg_str}")
+        except Exception as e:
+            logger.warning(f"CellxGene query failed for cluster {state['cluster_id']}: {e}")
             
         data_payload = "\n".join(data_parts)
 
+        logger.info(f"[Agent Call] Alpha | cluster={state['cluster_id']}")
         result = alpha.invoke({
             "organism": meta.get("organism", "Unknown"),
             "tissue_type": meta.get("tissue_type", "Unknown"),
@@ -46,11 +59,62 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
             "data_payload": data_payload
         })
         messages = state.get("messages", [])
-        messages.append({"agent": "Alpha", "input": {"cluster_id": state["cluster_id"], "top_degs": state["top_degs"]}, "output": result.dict() if hasattr(result, 'dict') else str(result)})
+        
+        # Enhanced Trace: Show the exact evidence Alpha saw
+        alpha_input = f"Top DEGs: {state['top_degs'][:20]}"
+        if data_payload:
+            alpha_input += f"\n{data_payload}"
+        messages.append({
+            "role": "Alpha Input Evidence", 
+            "content": alpha_input
+        })
+        messages.append({
+            "role": "Alpha Annotation", 
+            "content": result.model_dump_json(indent=2) if hasattr(result, 'model_dump_json') else str(result)
+        })
         return {"alpha_candidates": result, "messages": messages}
+
+    def run_epsilon(state: AgentState):
+        from transcribe.tools.biology_tools import gsea_tool
+        meta = state.get("metadata", {})
+        
+        # Call GSEA Tool programmatically (programmatic calling as requested)
+        try:
+            pathway_results = gsea_tool.func(state["top_degs"][:50])
+            pe = str(pathway_results)
+        except Exception as e:
+            logger.warning(f"GSEA Tool failed for cluster {state['cluster_id']}: {e}")
+            pe = state.get("pathway_enrichment") or "None available"
+        
+        if not pe or str(pe).lower() == "none available":
+            return {"pathway_analysis": None}
+
+        logger.info(f"[Agent Call] Epsilon | cluster={state['cluster_id']}")
+        result = epsilon.invoke({
+            "organism": meta.get("organism", "Unknown"),
+            "tissue_type": meta.get("tissue_type", "Unknown"),
+            "disease": meta.get("disease", "Unknown"),
+            "cluster_id": state["cluster_id"],
+            "pathway_enrichment": pe
+        })
+        messages = state.get("messages", [])
+        messages.append({
+            "role": "Epsilon Input",
+            "content": f"Genes: {state['top_degs'][:50]}"
+        })
+        messages.append({
+            "role": "Epsilon Output",
+            "content": (
+                f"GSEA Scores: {pe}\n\n"
+                f"Pathway Analysis: "
+                f"{result.model_dump_json(indent=2) if hasattr(result, 'model_dump_json') else str(result)}"
+            )
+        })
+        return {"pathway_analysis": result, "messages": messages}
 
     def run_beta(state: AgentState):
         meta = state.get("metadata", {})
+        logger.info(f"[Agent Call] Beta | cluster={state['cluster_id']}")
         result = beta.invoke({
             "organism": meta.get("organism", "Unknown"),
             "tissue_type": meta.get("tissue_type", "Unknown"),
@@ -60,71 +124,14 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
             "spatial_neighbors": state.get("spatial_neighbor_frequencies")
         })
         messages = state.get("messages", [])
-        messages.append({"agent": "Beta", "input": {"alpha_candidates": str(state.get("alpha_candidates"))}, "output": str(result)})
+        messages.append({
+            "role": "Beta Spatial Critique", 
+            "content": str(result)
+        })
         return {"beta_feedback": result, "messages": messages}
 
-    def run_gamma(state: AgentState):
-        logger.debug(f"Running Gamma on Cluster {state['cluster_id']}...")
-        beta_feedback = state.get("beta_feedback", "None")
-        metadata = state.get("metadata", {})
-        
-        rag_context = "None"
-        if use_rag and rag_index:
-            try:
-                # Query RAG using top DEGs and metadata filters
-                query = f"Cluster characterized by top DEGs: {', '.join(state['top_degs'][:20])}"
-                filters = {}
-                if metadata.get("organism") and metadata.get("organism").lower() != "unknown":
-                    filters["organism"] = metadata.get("organism")
-                if metadata.get("tissue") and metadata.get("tissue").lower() != "unknown":
-                    filters["tissue"] = metadata.get("tissue")
-                    
-                rag_context = retrieve_rag_context(
-                    query=query,
-                    metadata_filters=filters,
-                    index_name=rag_index,
-                    embeddings_provider=provider
-                )
-            except Exception as e:
-                logger.error(f"RAG Retrieval failed during Gamma execution: {e}")
-                rag_context = f"RAG failed: {e}"
-        
-        # Format alpha_candidates as a human-readable string for Gamma
-        alpha_text = ""
-        if hasattr(state["alpha_candidates"], "candidates"):
-            for idx, c in enumerate(state["alpha_candidates"].candidates):
-                alpha_text += f"{idx+1}. {c.cell_type} (Confidence: {c.confidence})\n"
-        else:
-            alpha_text = str(state["alpha_candidates"])
-
-        result = gamma.invoke({
-            "organism": metadata.get("organism", "Unknown"),
-            "tissue_type": metadata.get("tissue", "Unknown"),
-            "disease": metadata.get("disease", "Unknown"),
-            "cluster_id": state["cluster_id"],
-            "top_degs": state["top_degs"],
-            "alpha_candidates": alpha_text,
-            "beta_feedback": beta_feedback,
-            "rag_context": rag_context
-        })
-        
-        # Log communication trace
-        input_log = {
-            "agent": "Gamma",
-            "type": "input",
-            "content": f"Alpha: {state['alpha_candidates'].model_dump_json()} | Beta: {beta_feedback} | RAG: {rag_context}"
-        }
-        output_log = {
-            "agent": "Gamma",
-            "type": "output",
-            "content": result.model_dump()
-        }
-        state["messages"].extend([input_log, output_log])
-        
-        return {"final_annotation": result, "messages": state["messages"]}
-
     workflow.add_node("alpha", run_alpha)
-    workflow.add_node("gamma", run_gamma)
+    workflow.add_node("epsilon", run_epsilon)
     
     logger.debug(f"build_workflow modality='{modality}'")
     
@@ -132,14 +139,14 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
         logger.debug("Adding Beta node for spatial modality!")
         workflow.add_node("beta", run_beta)
         workflow.add_edge(START, "alpha")
-        workflow.add_edge("alpha", "beta")
-        workflow.add_edge("beta", "gamma")
+        workflow.add_edge("alpha", "epsilon")
+        workflow.add_edge("epsilon", "beta")
+        workflow.add_edge("beta", END)
     else:
-        # single-cell routing
-        logger.debug("Single-cell routing, bypassing Beta.")
+        # factorized routing
+        logger.debug(f"Bypassing Beta for modality={modality}")
         workflow.add_edge(START, "alpha")
-        workflow.add_edge("alpha", "gamma")
-
-    workflow.add_edge("gamma", END)
+        workflow.add_edge("alpha", "epsilon")
+        workflow.add_edge("epsilon", END)
     
     return workflow.compile()

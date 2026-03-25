@@ -170,3 +170,57 @@ def ensure_umap_coords(adata):
             sc.tl.umap(adata)
         except Exception as e:
             logger.warning(f"Failed to compute UMAP: {e}")
+
+def build_umap_proximity(adata, cluster_col: str, target_cluster: str) -> Dict[str, float]:
+    """
+    Build a UMAP-based proximity map for a cluster.
+    Computes centroid of each cluster in UMAP space, then returns
+    proximity scores (inverse distance, normalized) from the target cluster
+    to all other clusters. This serves as a single-cell analog to spatial nichecards.
+    """
+    ensure_umap_coords(adata)
+    
+    if "X_umap" not in adata.obsm:
+        logger.warning("No UMAP coordinates available for proximity computation.")
+        return {}
+    
+    umap_coords = adata.obsm["X_umap"]
+    clusters = adata.obs[cluster_col].astype(str)
+    unique_clusters = sorted(clusters.unique())
+    
+    if str(target_cluster) not in unique_clusters:
+        return {}
+    
+    # Compute centroids for all clusters
+    centroids = {}
+    for cid in unique_clusters:
+        mask = clusters == cid
+        centroids[cid] = np.mean(umap_coords[mask], axis=0)
+    
+    target_centroid = centroids[str(target_cluster)]
+    
+    # Compute distances from target to all other clusters
+    distances = {}
+    for cid, centroid in centroids.items():
+        if cid == str(target_cluster):
+            continue
+        dist = np.linalg.norm(target_centroid - centroid)
+        distances[cid] = dist
+    
+    if not distances:
+        return {}
+    
+    # Convert to proximity scores (inverse distance, normalized)
+    max_dist = max(distances.values())
+    if max_dist == 0:
+        return {cid: 1.0 for cid in distances}
+    
+    proximity = {}
+    for cid, dist in distances.items():
+        proximity[cid] = round(float(1.0 - dist / max_dist), 4)
+    
+    # Sort by proximity (highest first)
+    proximity = dict(sorted(proximity.items(), key=lambda x: x[1], reverse=True))
+    
+    return proximity
+

@@ -1,0 +1,12 @@
+mode: "eval"
+output: "results/eval_results_demo"
+num_tries: 1
+models:
+  - "gemma-3-27b-it"
+datasets:
+  - name: "PBMC3kToy"
+    path: "toy_data"
+    modality: "single-cell"
+    organism: "Human"
+    tissue: "PBMC"
+    disease: "Normal"
