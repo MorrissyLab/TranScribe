@@ -6,6 +6,7 @@ eval output directories. Uses base.html + report.css templates and injects
 computed data via simple placeholder replacement.
 """
 import json
+import html
 from pathlib import Path
 from typing import Optional, List
 from transcribe.config import logger
@@ -39,6 +40,103 @@ def _conf_bar_width(conf) -> int:
     if isinstance(conf, (int, float)):
         return int(min(100, max(0, float(conf) * 100)))
     return 0
+
+
+def _eta_hierarchy_graph_html(eta_summary: dict, cluster_mapping: dict) -> str:
+    groups = eta_summary.get("groups", []) if isinstance(eta_summary, dict) else []
+    if not groups:
+        return ""
+
+    # Parent categories in columns; groups flow downward to avoid overlap.
+    parent_names = []
+    for g in groups:
+        p = g.get("parent_group", "Uncategorized")
+        if p not in parent_names:
+            parent_names.append(p)
+    if not parent_names:
+        parent_names = ["Uncategorized"]
+
+    width = 980
+    parent_y = 45
+    col_span = width / max(1, len(parent_names))
+    parent_x = {p: (i + 0.5) * col_span for i, p in enumerate(parent_names)}
+
+    groups_by_parent = {p: [] for p in parent_names}
+    for g in groups:
+        p = g.get("parent_group", "Uncategorized")
+        if p not in groups_by_parent:
+            groups_by_parent[p] = []
+            parent_x[p] = width / 2
+        groups_by_parent[p].append(g)
+
+    # Compute group positions per parent column.
+    group_positions = []
+    max_rows = 0
+    for p in parent_names:
+        p_groups = groups_by_parent.get(p, [])
+        n = len(p_groups)
+        max_rows = max(max_rows, n)
+        if n == 0:
+            continue
+        gx = parent_x[p]
+        for row_idx, g in enumerate(p_groups):
+            gy = 125 + row_idx * 112
+            group_positions.append((p, g, gx, gy))
+
+    graph_height = max(260, 130 + max_rows * 112)
+
+    edges = []
+    parent_nodes = []
+    group_nodes = []
+    for p in parent_names:
+        x = parent_x[p]
+        p_label = html.escape(str(p))
+        parent_nodes.append(
+            f'<g><rect x="{x-72:.1f}" y="{parent_y-18}" width="144" height="36" rx="9" '
+            f'fill="rgba(88,166,255,0.12)" stroke="#58a6ff" />'
+            f'<text x="{x:.1f}" y="{parent_y+5}" text-anchor="middle" fill="#c9d1d9" '
+            f'font-size="12" font-weight="700">{p_label}</text></g>'
+        )
+
+    for p, g, gx, gy in group_positions:
+        edges.append(
+            f'<line x1="{parent_x[p]:.1f}" y1="{parent_y+18}" x2="{gx:.1f}" y2="{gy-18}" '
+            f'stroke="rgba(188,140,255,0.55)" stroke-width="1.5"/>'
+        )
+        group_name = html.escape(str(g.get("group_name", "Group")))
+        clusters = [str(c) for c in g.get("member_clusters", [])]
+        cluster_lines = []
+        for cid in clusters[:6]:
+            pred = ""
+            if isinstance(cluster_mapping, dict):
+                pred = cluster_mapping.get(cid, {}).get("pred", "")
+            pred_txt = html.escape(pred) if pred else "Unknown"
+            cluster_lines.append(f"C{html.escape(cid)}: {pred_txt}")
+        if len(clusters) > 6:
+            cluster_lines.append(f"... +{len(clusters) - 6} more")
+        if not cluster_lines:
+            cluster_lines = ["No clusters"]
+
+        text_lines = "".join(
+            f'<tspan x="{gx:.1f}" dy="13">{line}</tspan>' for line in cluster_lines
+        )
+        box_h = 50 + len(cluster_lines) * 13
+        group_nodes.append(
+            f'<g>'
+            f'<rect x="{gx-185:.1f}" y="{gy-20}" width="370" height="{box_h}" rx="10" '
+            f'fill="rgba(188,140,255,0.08)" stroke="rgba(188,140,255,0.5)" />'
+            f'<text x="{gx:.1f}" y="{gy}" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="700">{group_name}</text>'
+            f'<text x="{gx:.1f}" y="{gy+14}" text-anchor="middle" fill="#8b949e" font-size="10">{text_lines}</text>'
+            f'</g>'
+        )
+
+    svg = (
+        f'<svg viewBox="0 0 {width} {graph_height}" style="width:100%;height:auto;display:block;'
+        f'background:rgba(255,255,255,0.02);border:1px solid rgba(188,140,255,0.2);border-radius:10px;padding:8px">'
+        f'{"".join(edges)}{"".join(parent_nodes)}{"".join(group_nodes)}'
+        f'</svg>'
+    )
+    return svg
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +376,12 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict, a
         
         gamma_trace_key = f"{run_id}___GLOBAL_GAMMA__"
         all_traces[gamma_trace_key] = ds["traces"].get("__GLOBAL_GAMMA__", [])
+        eta_graph = _eta_hierarchy_graph_html(eta_summary, ds.get("mapping", {}))
 
         eta_html = f"""
+        <div style="margin-bottom:14px">
+            {eta_graph}
+        </div>
         <div style="font-size:0.9rem;line-height:1.5;margin-bottom:12px;">{eta_summary.get("narrative_summary", "")}</div>
         <ul style="font-size:0.85rem;line-height:1.5;margin:0;padding-left:20px;">
             {groups_html}
