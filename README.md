@@ -9,7 +9,7 @@ TranScribe is a high-performance framework that leverages generative AI (Gemma 3
 - **Seven-Agent Orchestration**: Alpha, Beta, Epsilon, Gamma, Zeta, Eta, and Delta work in a 4-phase pipeline.
 - **Factorized Data Support**: Annotate latent factors from NMF, cNMF, or other matrix decomposition methods.
 - **Batch Factorized Processing**: Automatically discover and annotate all factorization ranks in a directory, outputting to a single tabbed HTML report.
-- **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode, providing Agent Alpha with deep functional context beyond raw gene weights.
+- **Anntools Integration**: Automated Marker Overlap (Geneset scoring) and Pathway Enrichment (gProfiler) for Factorized mode; marker overlap is consumed by Agent Alpha, while pathway enrichment is consumed by Agent Epsilon.
 - **Spatial Transcriptomics Support**: Integrated support for Visium and other spatial technologies via `squidpy`.
 - **Inference & Evaluation**: Supports both "Run Mode" (new datasets) and "Benchmark Mode" (against ground truth).
 - **CellxGene WMG Integration**: High-fidelity cell-type matching using the official CZ CellxGene Census (50M+ reference cells).
@@ -25,60 +25,101 @@ TranScribe employs a decoupled, multi-agent architecture where specialized LLM a
 ### 1. Unified Agent Workflow
 
 ```mermaid
-graph TD
-    subgraph "Input Layer"
-        H5[h5ad / AnnData]
-        CSV[Marker Gene CSV]
-        FAC[Factorized Matrix CSV/TSV]
+%%{init: {'theme':'base','themeVariables':{
+'background':'#0b1220',
+'primaryTextColor':'#e5e7eb',
+'lineColor':'#94a3b8',
+'fontFamily':'Arial'
+}}}%%
+flowchart LR
+    subgraph L0["Phase 0: Input Layer"]
+        H5["h5ad / AnnData"]
+        CSV["Marker Gene CSV"]
+        FAC["Factorized Matrix CSV/TSV"]
+        GT["Ground Truth (Eval Only)"]
     end
 
-    subgraph "Tools Layer"
-        PRE[Scanpy/Squidpy Preprocessing]
-        Ann[Anntools: Marker Overlap & Pathways]
-        WMG[CellxGene WMG Annotator]
-        H5 --> PRE
-        FAC --> Ann
-        CSV --> WMG
-        Ann --> WMG
+    subgraph L1["Phase 1: Tooling Layer"]
+        PRE["Scanpy / Squidpy Preprocessing"]
+        ANN["Anntools<br/>(Marker Overlap + Pathway Enrichment)"]
+        WMG["CellxGene WMG Annotator"]
     end
 
-    subgraph "Phase 1: Per-Cluster Extraction"
-        PRE --> Alpha[Agent Alpha: Molecular Profiler]
-        CSV --> Alpha
-        Ann --> Alpha
-        WMG --> Alpha
-        PRE --> Beta[Agent Beta: Spatial/UMAP Context]
-        Alpha --> Epsilon[Agent Epsilon: Pathway Analyst]
+    subgraph P1["Phase 2: Per-Cluster Evidence"]
+        ALPHA["Agent Alpha<br/>Molecular Profiler"]
+        EPS["Agent Epsilon<br/>Pathway Analyst"]
+        BETA["Agent Beta<br/>Spatial/UMAP Context"]
     end
 
-    subgraph "Phase 2: Full-Context Decision"
-        Alpha --> Gamma[Agent Gamma: Batch Ontologist]
-        Beta --> Gamma
-        Epsilon --> Gamma
-        DB[(Pinecone/RAG)] -.->|Cell Ontology| Gamma
-    end
-    
-    subgraph "Phase 3 & 4: Validation & Summary"
-        Gamma --> Zeta[Agent Zeta: Confidence]
-        Zeta --> Eta[Agent Eta: Hierarchical Summary]
+    subgraph P2["Phase 3: Batch Decision"]
+        GAMMA["Agent Gamma<br/>Batch Ontologist"]
+        ANN_OUT["Final Annotation + Reasoning"]
+        RAG[("Pinecone / RAG")]
     end
 
-    subgraph "Validation & Reporting"
-        Gamma --> R[Final Annotation + Reasoning]
-        R --> Delta[Agent Delta: Evaluator]
-        GT[Ground Truth] --> Delta
-        Delta --> V[Interactive HTML Report]
+    subgraph P3["Phase 4: Confidence"]
+        ZETA["Agent Zeta<br/>Confidence Assessor"]
     end
 
-    classDef agent fill:#283593,color:#fff,stroke:#1a237e,stroke-width:2px;
-    classDef tool fill:#f5f5f5,stroke:#616161,stroke-width:1px;
-    classDef input fill:#fff,stroke:#333,stroke-dasharray: 5 5;
-    classDef database fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    subgraph P4["Phase 5: Dataset Summary"]
+        ETA["Agent Eta<br/>Hierarchical Summary"]
+    end
 
-    class Alpha,Beta,Gamma,Delta agent;
-    class PRE,Ann,R,WMG tool;
+    subgraph BM["Phase 6: Benchmarking (Eval Mode)"]
+        DELTA["Agent Delta<br/>Evaluator (Eval Mode)"]
+    end
+
+    subgraph OUT["Phase 7: Outputs"]
+        REPORT["Interactive HTML Report"]
+    end
+
+    H5 --> PRE
+    FAC --> ANN
+    CSV --> WMG
+    ANN --> WMG
+
+    PRE --> ALPHA
+    CSV --> ALPHA
+    ANN --> ALPHA
+    WMG --> ALPHA
+
+    ANN --> EPS
+    PRE --> BETA
+
+    ALPHA --> GAMMA
+    EPS --> GAMMA
+    BETA --> GAMMA
+    RAG -. "Optional ontology context" .-> GAMMA
+
+    GAMMA --> ANN_OUT
+    ANN_OUT --> ZETA
+    ANN_OUT --> ETA
+    ZETA --> REPORT
+    ETA --> REPORT
+    ANN_OUT --> DELTA
+    GT --> DELTA
+    DELTA --> REPORT
+
+    classDef agent fill:#1d4ed8,color:#f8fafc,stroke:#93c5fd,stroke-width:2px;
+    classDef tool fill:#0f172a,color:#e2e8f0,stroke:#64748b,stroke-width:1.5px;
+    classDef input fill:#111827,color:#f3f4f6,stroke:#9ca3af,stroke-dasharray: 4 3;
+    classDef store fill:#3f2a00,color:#fde68a,stroke:#fbbf24,stroke-width:2px;
+    classDef output fill:#083344,color:#ccfbf1,stroke:#22d3ee,stroke-width:1.5px;
+
+    class ALPHA,BETA,EPS,GAMMA,ZETA,ETA,DELTA agent;
+    class PRE,ANN,WMG tool;
     class H5,CSV,FAC,GT input;
-    class DB database;
+    class RAG store;
+    class ANN_OUT,REPORT output;
+
+    style L0 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style L1 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style P1 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style P2 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style P3 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style P4 fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style BM fill:#0b1220,stroke:#334155,color:#e5e7eb
+    style OUT fill:#0b1220,stroke:#334155,color:#e5e7eb
 ```
 
 ### 2. Data Types & Inputs
@@ -93,9 +134,10 @@ graph TD
 - **Benchmark Pipeline**: Used for validation. Measures semantic and exact accuracy against ground truth, generating a head-to-head model comparison report.
 
 ### 4. Modality-Specific Coordination
-- **Single-cell mode**: Alpha and Epsilon run per cluster, then **Beta runs once in batch** across all clusters using UMAP proximity context before Gamma performs batch finalization.
+- **Single-cell mode**: Alpha and Epsilon run per cluster from independent inputs (DEG/candidate evidence for Alpha; pathway-tool evidence for Epsilon), then **Beta runs once in batch** across all clusters using UMAP proximity context before Gamma performs batch finalization.
 - **Spatial mode**: Beta runs per cluster using spatial neighborhood context.
 - **Factorized mode**: Beta is bypassed; Gamma integrates Alpha + Epsilon evidence across all clusters.
+- **Evaluation report composition**: Eta always contributes hierarchical experiment-level summary; Delta contributes biological match evaluation **only when `ground_truth_col` is provided** (evaluation mode).
 
 ### 5. Trace Semantics (HTML Report)
 - **Alpha Input Evidence**: concise molecular evidence and candidate labels (confidence is not assigned here).
