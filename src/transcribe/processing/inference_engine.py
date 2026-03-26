@@ -33,6 +33,8 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     actual_run_name = run_name if run_name else dataset_name
     dataset_out_dir = Path(out_dir) / actual_run_name
     dataset_out_dir.mkdir(parents=True, exist_ok=True)
+    tool_outputs_dir = dataset_out_dir / "tool_outputs"
+    tool_outputs_dir.mkdir(parents=True, exist_ok=True)
 
     app = build_workflow(provider=provider, model_name=model_name, modality=modality)
     delta_agent = create_delta_agent(provider=provider, model_name=model_name)
@@ -86,7 +88,12 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     cluster_colors = {}
     
     metadata = {"organism": organism, "tissue_type": tissue, "disease": disease}
-    
+    pathway_context_by_cluster = {}
+    ssgsea_run_info = {}
+    epsilon_tool_inputs = {}
+    marker_tool_outputs = {}
+    cellxgene_tool_outputs = {}
+
     def _parse_json_block(text: str):
         cleaned = str(text).strip()
         if "```json" in cleaned:
@@ -97,6 +104,95 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         if "{" in cleaned and "}" in cleaned:
             cleaned = cleaned[cleaned.find("{"): cleaned.rfind("}") + 1]
         return json.loads(cleaned)
+
+    def _is_nk_like_label(label: str) -> bool:
+        s = str(label or "").lower()
+        return ("natural killer" in s) or (s in {"nk cell", "nk cells"})
+
+    def _is_t_like_label(label: str) -> bool:
+        s = str(label or "").lower()
+        return (" t cell" in s) or s.startswith("t cell") or ("cd8" in s and "cell" in s)
+
+    def _pick_t_subtype_label(cellxgene_output):
+        """
+        Pick the most specific T-lineage label available from CellxGene.
+        Defaults to broad 'T cell' when subtype evidence is weak.
+        """
+        if not isinstance(cellxgene_output, dict):
+            return ("T cell", "CL:0000084")
+        candidates = cellxgene_output.get("candidates", []) or []
+        texts = []
+        for c in candidates[:10]:
+            if isinstance(c, (list, tuple)) and c:
+                texts.append(str(c[0]).lower())
+            else:
+                texts.append(str(c).lower())
+        joined = " | ".join(texts)
+        if "cd8-positive" in joined or "cd8 t" in joined:
+            return ("CD8 T cell", "CL:0000625")
+        return ("T cell", "CL:0000084")
+
+    def _apply_lymphoid_boundary_strategy(annotation, top_degs, cellxgene_output=None):
+        """
+        Deterministic post-Gamma boundary strategy for NK-vs-T ambiguity.
+        We do not hard-code one destination label; we compute boundary evidence
+        and choose the more supported side, then subtype via CellxGene when possible.
+        """
+        current_label = getattr(annotation, "cell_type", "")
+        if not (_is_nk_like_label(current_label) or _is_t_like_label(current_label)):
+            return
+
+        degs = [str(g).upper() for g in (top_degs or [])]
+        rank = {g: i + 1 for i, g in enumerate(degs)}
+
+        def r(gene: str, default_rank: int = 999) -> int:
+            return rank.get(gene, default_rank)
+
+        # NK-favoring markers (especially FCGR3A/TYROBP/FCER1G for PBMC NK-like states)
+        nk_score = 0
+        nk_score += 3 if r("FCGR3A") <= 20 else 0
+        nk_score += 2 if r("TYROBP") <= 30 else 0
+        nk_score += 2 if r("FCER1G") <= 30 else 0
+        nk_score += 1 if r("KLRD1") <= 50 else 0
+        nk_score += 1 if r("NCR3") <= 50 else 0
+
+        # CD8/T-cell-favoring markers
+        t_score = 0
+        t_score += 2 if r("CD2") <= 30 else 0
+        t_score += 2 if r("ZAP70") <= 35 else 0
+        t_score += 2 if r("CD3D") <= 50 else 0
+        t_score += 2 if r("CD3E") <= 50 else 0
+        t_score += 3 if r("TRAC") <= 60 else 0
+        t_score += 2 if r("TRBC1") <= 60 else 0
+        t_score += 1 if r("LTB") <= 30 else 0
+        t_score += 1 if r("MAL") <= 30 else 0
+
+        margin = abs(t_score - nk_score)
+        if margin < 2:
+            return
+
+        old = annotation.cell_type
+        if t_score > nk_score and r("FCGR3A") > 30 and r("TYROBP") > 40 and r("FCER1G") > 40:
+            new_label, new_ont = _pick_t_subtype_label(cellxgene_output)
+            annotation.cell_type = new_label
+            annotation.ontology_id = new_ont
+            if annotation.confidence == "high":
+                annotation.confidence = "medium"
+            annotation.reasoning_chain = (
+                f"{annotation.reasoning_chain} "
+                f"[Boundary strategy] NK-vs-T gate favored T-lineage "
+                f"(t_score={t_score}, nk_score={nk_score}); reassigned '{old}' -> '{new_label}'."
+            )
+        elif nk_score > t_score and _is_t_like_label(old):
+            annotation.cell_type = "Natural Killer cell"
+            annotation.ontology_id = "CL:0000623"
+            if annotation.confidence == "high":
+                annotation.confidence = "medium"
+            annotation.reasoning_chain = (
+                f"{annotation.reasoning_chain} "
+                f"[Boundary strategy] NK-vs-T gate favored NK-lineage "
+                f"(nk_score={nk_score}, t_score={t_score}); reassigned '{old}' -> 'Natural Killer cell'."
+            )
     
     from transcribe.core.llm_factory import LLMFactory
     from transcribe.tools.scanpy_utils import build_nichecard, build_umap_proximity
@@ -162,6 +258,25 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     singleton_clusters = []
     if modality != "factorized":
         all_cluster_degs, singleton_clusters = get_all_degs(adata, cluster_col, top_n=100)
+        # Run ssGSEA pathway analysis once per dataset and reuse per-cluster pathway output.
+        try:
+            from transcribe.anntools.run_ssgsea_clusters import compute_ssgsea_for_adata
+            logger.info("Running ssGSEA pathway tool (MSigDB C8 cell type signatures) for all clusters...")
+            pathway_context_by_cluster, ssgsea_run_info = compute_ssgsea_for_adata(
+                adata=adata,
+                cluster_col=cluster_col,
+                out_dir=tool_outputs_dir / "ssgsea",
+                sample_id=dataset_name,
+                msigdb_alias="C8",
+                top_n=100,
+                threads=8,
+            )
+            with open(tool_outputs_dir / "ssgsea_cluster_top_pathways.json", "w", encoding="utf-8") as f:
+                json.dump(pathway_context_by_cluster, f, indent=2)
+            with open(tool_outputs_dir / "ssgsea_run_info.json", "w", encoding="utf-8") as f:
+                json.dump(ssgsea_run_info, f, indent=2)
+        except Exception as e:
+            logger.warning(f"ssGSEA pathway tool failed; pathway input for Epsilon may be missing: {e}")
     
     phase1_results = {}
     
@@ -204,6 +319,17 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                  "pathway_enrichment": None,
                  "messages": []
             }
+            if modality != "factorized":
+                top_pathways = pathway_context_by_cluster.get(cid_str, [])[:30]
+                if top_pathways:
+                    state_input["pathway_enrichment"] = {
+                        "source": "ssgsea",
+                        "msigdb_alias": "C8",
+                        "collection": ssgsea_run_info.get("collection", "C8_ALL"),
+                        "top_n": 30,
+                        "top_pathways": top_pathways,
+                    }
+            epsilon_tool_inputs[cid_str] = state_input.get("pathway_enrichment")
             
             if modality == "factorized":
                 if marker_overlap_df is not None and cid_str in marker_overlap_df.columns:
@@ -217,14 +343,29 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
             # Extract Epsilon and Beta summaries to include in Phase 2
             alpha_cand = final_state.get("alpha_candidates", "None")
             if hasattr(alpha_cand, "candidates"):
-                alpha_text = ", ".join([f"{c.cell_type} ({c.confidence})" for c in alpha_cand.candidates[:3]])
+                parts = []
+                for c in alpha_cand.candidates[:3]:
+                    c_conf = getattr(c, "confidence", None)
+                    parts.append(f"{c.cell_type} ({c_conf})" if c_conf else f"{c.cell_type}")
+                alpha_text = ", ".join(parts)
+                alpha_for_gamma = ", ".join([str(c.cell_type) for c in alpha_cand.candidates[:3]])
             else:
                 alpha_text = str(alpha_cand)
+                alpha_for_gamma = str(alpha_cand)
                 
             pathway_text = ""
             pa = final_state.get("pathway_analysis")
             if pa and hasattr(pa, "biological_summary"):
-                pathway_text = f"Pathways: {', '.join(pa.top_pathways)} | States: {', '.join(pa.suggested_cell_states)}"
+                primary_theme = getattr(pa, "primary_activity_theme", "")
+                secondary_themes = getattr(pa, "secondary_activity_themes", []) or []
+                suggested_states = getattr(pa, "suggested_cell_states", []) or []
+                biological_summary = getattr(pa, "biological_summary", "")
+                pathway_text = (
+                    f"Primary Theme: {primary_theme} | "
+                    f"Secondary Themes: {', '.join(secondary_themes)} | "
+                    f"States: {', '.join(suggested_states)} | "
+                    f"Summary: {biological_summary}"
+                )
             else:
                 pathway_text = str(pa) if pa else "None"
             
@@ -232,6 +373,8 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
 
             phase1_results[cid_str] = {
                 "alpha": alpha_text,
+                "alpha_for_gamma": alpha_for_gamma,
+                "alpha_raw": alpha_cand.model_dump() if hasattr(alpha_cand, "model_dump") else (alpha_cand.dict() if hasattr(alpha_cand, "dict") else alpha_cand),
                 "epsilon": pathway_text,
                 "epsilon_raw": pa.model_dump() if hasattr(pa, 'model_dump') else (pa.dict() if hasattr(pa, 'dict') else pa) if pa else None,
                 "beta": beta_text,
@@ -239,6 +382,11 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                 "top_degs": top_degs, # Keep full list (up to 100)
                 "messages": final_state.get("messages", [])
             }
+            # Persist full CellxGene output from tool message, if present.
+            for _msg in final_state.get("messages", []):
+                if isinstance(_msg, dict) and _msg.get("role") == "Alpha Tool Output (CellxGene)":
+                    cellxgene_tool_outputs[cid_str] = _msg.get("content")
+                    break
         except Exception as e:
             logger.error(f"Error in Phase 1 for cluster {cid_str}: {e}")
             phase1_results[cid_str] = {
@@ -256,7 +404,6 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         for cid_str, res in phase1_results.items():
             all_clusters_context += (
                 f"\n--- CLUSTER {cid_str} ---\n"
-                f"Alpha Candidates: {res.get('alpha', 'None')}\n"
                 f"UMAP Proximity: {res.get('umap_neighbors', {})}\n"
             )
         try:
@@ -267,21 +414,39 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
                 "disease": metadata.get("disease", "Unknown"),
                 "all_clusters_context": all_clusters_context
             })
-            beta_batch_map = _parse_json_block(beta_batch_raw) if isinstance(beta_batch_raw, str) else (beta_batch_raw or {})
+            if isinstance(beta_batch_raw, str):
+                parsed = _parse_json_block(beta_batch_raw)
+            else:
+                parsed = beta_batch_raw or {}
+            if isinstance(parsed, dict):
+                beta_batch_map = parsed.get("feedback_by_cluster", parsed)
+                if isinstance(beta_batch_map, str):
+                    beta_batch_map = _parse_json_block(beta_batch_map)
+            else:
+                beta_batch_map = {}
         except Exception as e:
             logger.warning(f"Batch Beta failed for single-cell mode: {e}")
             beta_batch_map = {}
         for cid_str, res in phase1_results.items():
             cluster_beta = beta_batch_map.get(cid_str, "None")
-            if isinstance(cluster_beta, dict):
-                adherence = cluster_beta.get("contextual_adherence", "Unknown")
-                critique = cluster_beta.get("critique", "No critique.")
+            if hasattr(cluster_beta, "contextual_adherence"):
+                adherence = cluster_beta.contextual_adherence
+                critique = cluster_beta.critique
                 beta_text = f"Contextual Adherence: {adherence}\nCritique: {critique}"
+            elif isinstance(cluster_beta, dict):
+                if "umap_context" in cluster_beta:
+                    beta_text = f"UMAP Context: {cluster_beta.get('umap_context', 'No context.')}"
+                else:
+                    adherence = cluster_beta.get("contextual_adherence", "Unknown")
+                    critique = cluster_beta.get("critique", "No critique.")
+                    beta_text = f"Contextual Adherence: {adherence}\nCritique: {critique}"
+            elif isinstance(cluster_beta, str):
+                beta_text = f"UMAP Context: {cluster_beta}"
             else:
                 beta_text = str(cluster_beta)
             res["beta"] = beta_text
             res["messages"].append({
-                "role": "Beta Batch UMAP Critique",
+                "role": "Beta Batch UMAP Context",
                 "content": beta_text
             })
 
@@ -289,13 +454,32 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     logger.info("Running Phase 2: Batch Gamma processing...")
     from transcribe.agents.gamma_ontologist import create_gamma_agent
     gamma_agent = create_gamma_agent(provider=provider, model_name=model_name)
+    batch_res = None
     
     # Construct massive ALL-CLUSTER evidence prompt
     all_clusters_evidence = ""
     for cid_str, res in phase1_results.items():
+        cxg = cellxgene_tool_outputs.get(cid_str)
+        cxg_text = "None"
+        if isinstance(cxg, dict):
+            pred = cxg.get("prediction", "Unknown")
+            candidates = cxg.get("candidates", [])[:3]
+            if len(candidates) <= 1:
+                cxg_text = f"Prediction: {pred}"
+            else:
+                score = cxg.get("score", "NA")
+                cand_text = ", ".join(
+                    [f"{c[0]} ({c[1]:.3f})" if isinstance(c, (list, tuple)) and len(c) >= 2 and isinstance(c[1], (int, float))
+                     else str(c) for c in candidates]
+                )
+                cxg_text = f"Prediction: {pred} (score={score}); Top candidates: {cand_text}"
+        elif cxg is not None:
+            cxg_text = str(cxg)
+
         all_clusters_evidence += f"\n--- CLUSTER {cid_str} ---\n"
-        all_clusters_evidence += f"Top DEGs: {', '.join(res['top_degs'])}\n"
-        all_clusters_evidence += f"Alpha (Molecular): {res['alpha']}\n"
+        all_clusters_evidence += f"Top DEGs: {', '.join(res['top_degs'][:20])}\n"
+        all_clusters_evidence += f"CellxGene (Ontology Retrieval): {cxg_text}\n"
+        all_clusters_evidence += f"Alpha (Molecular): {res.get('alpha_for_gamma', res['alpha'])}\n"
         all_clusters_evidence += f"Epsilon (Pathways): {res['epsilon']}\n"
         all_clusters_evidence += f"Beta (Spatial/UMAP Context): {res['beta']}\n"
         
@@ -314,6 +498,15 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
     except Exception as e:
         logger.error(f"Batch Gamma entirely failed: {e}")
         batch_annotations = []
+
+    # Deterministic boundary strategy for recurrent NK-vs-T ambiguity.
+    for ann in batch_annotations:
+        cid_str = str(getattr(ann, "cluster_id", ""))
+        _apply_lymphoid_boundary_strategy(
+            ann,
+            phase1_results.get(cid_str, {}).get("top_degs", []),
+            cellxgene_tool_outputs.get(cid_str),
+        )
         
     # Phase 3: Per-result Confidence Assessment
     logger.info("Running Phase 3: Zeta Confidence Assessment...")
@@ -345,6 +538,10 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         except Exception as e:
             logger.warning(f"Marker database query failed: {e}")
             expected_markers_res = ["CD4", "CD8A", "MS4A1", "CD14"]
+        marker_tool_outputs[cid_str] = {
+            "predicted_cell_type": ann.cell_type,
+            "expected_markers": expected_markers_res,
+        }
             
         # Invoke Zeta
         try:
@@ -449,7 +646,11 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         },
         {
             "role": "Batch Gamma Output",
-            "content": batch_res.model_dump_json(indent=2) if hasattr(batch_res, 'model_dump_json') else str(batch_res)
+            "content": (
+                batch_res.model_dump_json(indent=2)
+                if hasattr(batch_res, "model_dump_json")
+                else ("Gamma unavailable (call failed)." if batch_res is None else str(batch_res))
+            )
         }
     ]
 
@@ -573,6 +774,12 @@ def run_analysis(adata=None, factorized_df=None, usage_df=None, raw_data_path: s
         json.dump(eval_data, f, indent=4)
     with open(dataset_out_dir / "eval_communication_trace.json", "w") as f:
         json.dump(traces, f, indent=4)
+    with open(tool_outputs_dir / "epsilon_pathway_inputs.json", "w", encoding="utf-8") as f:
+        json.dump(epsilon_tool_inputs, f, indent=2)
+    with open(tool_outputs_dir / "query_marker_database_full.json", "w", encoding="utf-8") as f:
+        json.dump(marker_tool_outputs, f, indent=2)
+    with open(tool_outputs_dir / "cellxgene_full_outputs.json", "w", encoding="utf-8") as f:
+        json.dump(cellxgene_tool_outputs, f, indent=2)
         
     # Generate Plots from separated module
     df_results = plot_evaluation_results(

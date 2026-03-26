@@ -5,6 +5,7 @@ Handles exporting experiment results to different formats (e.g., CSV).
 """
 import csv
 import pandas as pd
+import json
 from pathlib import Path
 from typing import List, Dict
 from transcribe.config import logger
@@ -13,19 +14,40 @@ def export_summary_to_csv(datasets: List[Dict], output_path: Path):
     """
     Exports a summary of all datasets/experiments to a single CSV file.
     
-    Expected fields: 
-    experiment_name, cluster, predicted cell type, ground truth, top DEGs(5), reasoning
+    Full per-cluster export including prediction, confidence, pathway, and tool outputs.
     """
     headers = [
-        "experiment_name", 
-        "cluster", 
-        "predicted cell type", 
-        "ground truth", 
-        "top DEGs(5)", 
-        "reasoning"
+        "experiment_name",
+        "cluster",
+        "predicted cell type",
+        "ground truth",
+        "top DEGs(5)",
+        "gamma_reasoning",
+        "gamma_confidence",
+        "zeta_overlap_score",
+        "zeta_expected_markers",
+        "zeta_observed_markers",
+        "zeta_agreement_narrative",
+        "epsilon_biological_summary",
+        "epsilon_top_pathways",
+        "epsilon_suggested_cell_states",
+        "epsilon_input_top_ranked_pathways",
+        "cellxgene_candidates",
+        "cellxgene_full_output",
+        "marker_db_expected_markers",
     ]
     
     rows = []
+
+    def _json_text(obj):
+        if obj is None:
+            return ""
+        if isinstance(obj, str):
+            return obj
+        try:
+            return json.dumps(obj, ensure_ascii=False)
+        except Exception:
+            return str(obj)
     
     for ds in datasets:
         dataset_name = ds.get("name", "Unknown")
@@ -34,6 +56,10 @@ def export_summary_to_csv(datasets: List[Dict], output_path: Path):
         mapping = ds.get("mapping", {})
         degs = ds.get("degs", {})
         raw_results = ds.get("raw", {})
+        tool_outputs = ds.get("tool_outputs", {})
+        cellxgene_map = tool_outputs.get("cellxgene_full_outputs", {}) if isinstance(tool_outputs, dict) else {}
+        epsilon_inputs = tool_outputs.get("epsilon_pathway_inputs", {}) if isinstance(tool_outputs, dict) else {}
+        marker_db_map = tool_outputs.get("query_marker_database_full", {}) if isinstance(tool_outputs, dict) else {}
         
         for cluster_id, m in mapping.items():
             pred_lbl = m.get("pred", "Error")
@@ -47,10 +73,40 @@ def export_summary_to_csv(datasets: List[Dict], output_path: Path):
             raw_ann = raw_results.get(cluster_id, {})
             if isinstance(raw_ann, str):
                 reasoning = raw_ann
+                gamma_conf = "N/A"
+                zeta_data = {}
+                pathway_data = {}
             elif isinstance(raw_ann, dict):
                 reasoning = raw_ann.get("reasoning_chain", "N/A")
+                gamma_conf = raw_ann.get("confidence", "N/A")
+                zeta_data = raw_ann.get("confidence_assessment", {}) if isinstance(raw_ann.get("confidence_assessment"), dict) else {}
+                pathway_data = raw_ann.get("pathway_activity", {}) if isinstance(raw_ann.get("pathway_activity"), dict) else {}
             else:
                 reasoning = "N/A"
+                gamma_conf = "N/A"
+                zeta_data = {}
+                pathway_data = {}
+
+            epsilon_input = epsilon_inputs.get(cluster_id, {}) if isinstance(epsilon_inputs, dict) else {}
+            epsilon_input_top = []
+            if isinstance(epsilon_input, dict):
+                epsilon_input_top = epsilon_input.get("top_pathways", [])[:10]
+
+            cellxgene_out = cellxgene_map.get(cluster_id, {}) if isinstance(cellxgene_map, dict) else {}
+            cellxgene_candidates = ""
+            if isinstance(cellxgene_out, dict):
+                cands = cellxgene_out.get("candidates", [])
+                if isinstance(cands, list):
+                    cellxgene_candidates = ", ".join(
+                        f"{c[0]} ({float(c[1]):.3f})" for c in cands[:5] if isinstance(c, (list, tuple)) and len(c) >= 2
+                    )
+
+            marker_db = marker_db_map.get(cluster_id, {}) if isinstance(marker_db_map, dict) else {}
+            marker_db_expected = ""
+            if isinstance(marker_db, dict):
+                em = marker_db.get("expected_markers", [])
+                if isinstance(em, list):
+                    marker_db_expected = ", ".join(str(x) for x in em)
                 
             rows.append({
                 "experiment_name": dataset_name,
@@ -58,7 +114,19 @@ def export_summary_to_csv(datasets: List[Dict], output_path: Path):
                 "predicted cell type": pred_lbl,
                 "ground truth": true_lbl,
                 "top DEGs(5)": top_5_degs,
-                "reasoning": reasoning
+                "gamma_reasoning": reasoning,
+                "gamma_confidence": gamma_conf,
+                "zeta_overlap_score": zeta_data.get("overlap_score", ""),
+                "zeta_expected_markers": ", ".join(zeta_data.get("expected_markers", [])) if isinstance(zeta_data.get("expected_markers", []), list) else "",
+                "zeta_observed_markers": ", ".join(zeta_data.get("observed_markers", [])) if isinstance(zeta_data.get("observed_markers", []), list) else "",
+                "zeta_agreement_narrative": zeta_data.get("agreement_narrative", ""),
+                "epsilon_biological_summary": pathway_data.get("biological_summary", pathway_data.get("summary", "")),
+                "epsilon_top_pathways": ", ".join(pathway_data.get("top_pathways", [])) if isinstance(pathway_data.get("top_pathways", []), list) else "",
+                "epsilon_suggested_cell_states": ", ".join(pathway_data.get("suggested_cell_states", [])) if isinstance(pathway_data.get("suggested_cell_states", []), list) else "",
+                "epsilon_input_top_ranked_pathways": _json_text(epsilon_input_top),
+                "cellxgene_candidates": cellxgene_candidates,
+                "cellxgene_full_output": _json_text(cellxgene_out),
+                "marker_db_expected_markers": marker_db_expected,
             })
             
     try:

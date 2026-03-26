@@ -1,11 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any, Literal
+from typing import List, Dict, Optional, Any, Literal, Union
 from typing_extensions import TypedDict
 
 class CandidateAnnotation(BaseModel):
     """A single candidate cell type annotation."""
     cell_type: str = Field(description="Proposed cell type name.")
-    confidence: Literal["high", "medium", "low"] = Field(description="Confidence level of this candidate: 'high', 'medium', or 'low'.")
+    confidence: Optional[Literal["high", "medium", "low"]] = Field(
+        default=None,
+        description="Optional candidate confidence. Prefer downstream confidence handling."
+    )
     reasoning: str = Field(description="Brief reasoning for this annotation.")
 
 class CandidateList(BaseModel):
@@ -17,7 +20,10 @@ class FinalAnnotation(BaseModel):
     cluster_id: str = Field(description="The cluster being annotated.")
     cell_type: str = Field(description="Standardized Cell Ontology type.")
     ontology_id: str = Field(default="", description="Optional Cell Ontology ID (e.g., CL:0000000).")
-    confidence: Literal["high", "medium", "low"] = Field(description="Final categorical confidence level: 'high', 'medium', or 'low'.")
+    confidence: Optional[Literal["high", "medium", "low"]] = Field(
+        default=None,
+        description="Optional confidence. Typically assigned downstream by Zeta."
+    )
     reasoning_chain: str = Field(description="Full reasoning chain explaining the decision.")
 
 class EvaluationMatch(BaseModel):
@@ -38,10 +44,27 @@ class BatchEvaluation(BaseModel):
     evaluations: List[ClusterEvaluation]
 
 class PathwayAnalysis(BaseModel):
-    """Result of Agent Epsilon analyzing GO enrichment pathways."""
+    """Result of Agent Epsilon analyzing ranked pathway enrichment output."""
+    primary_activity_theme: str = Field(description="Single dominant pathway/activity theme for the cluster.")
+    secondary_activity_themes: List[str] = Field(description="Supporting secondary themes, ranked by relevance.")
     top_pathways: List[str] = Field(description="List of the most prominent biological pathways.")
     biological_summary: str = Field(description="Narrative summary of the active pathways and their cellular implications.")
     suggested_cell_states: List[str] = Field(description="Cell types or functional states suggested by pathway evidence.")
+
+
+class BetaBatchClusterFeedback(BaseModel):
+    """Batch Beta contextual judgment for one cluster."""
+    contextual_adherence: Literal["Plausible", "Implausible", "Unknown"] = Field(
+        description="Whether the cluster's candidate annotation is contextually plausible."
+    )
+    critique: str = Field(description="Brief contextual critique for the cluster.")
+
+
+class BetaBatchFeedback(BaseModel):
+    """Batch Beta contextual judgments keyed by cluster id."""
+    feedback_by_cluster: Dict[str, Union[BetaBatchClusterFeedback, str]] = Field(
+        description="Map of cluster id to contextual feedback."
+    )
 
 class ConfidenceAssessment(BaseModel):
     """Result of Agent Zeta evaluating predicted vs expected marker presence."""
@@ -58,7 +81,10 @@ class BatchAnnotation(BaseModel):
 class CellTypeGroup(BaseModel):
     """A hierarchical group produced by Eta."""
     group_name: str = Field(description="Name of the group (e.g. 'T Cells').")
-    parent_group: str = Field(description="Parent group category (e.g. 'Immune').")
+    parent_group: Optional[str] = Field(
+        default=None,
+        description="Parent group category (e.g. 'Immune'). Top-level groups may be null."
+    )
     member_clusters: List[str] = Field(description="Cluster IDs belonging to this group.")
     description: str = Field(description="Brief description of the cell types in this group.")
 
@@ -75,7 +101,7 @@ class AgentState(TypedDict):
     expression_profile: Optional[Dict[str, float]]
     spatial_neighbor_frequencies: Optional[Dict[str, float]]
     marker_overlap: Optional[Dict[str, float]]
-    pathway_enrichment: Optional[Dict[str, float]]
+    pathway_enrichment: Optional[Dict[str, Any]]
     alpha_candidates: Optional[CandidateList]
     pathway_analysis: Optional[PathwayAnalysis]
     beta_feedback: Optional[str]

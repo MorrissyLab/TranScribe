@@ -98,8 +98,10 @@ graph TD
 - **Factorized mode**: Beta is bypassed; Gamma integrates Alpha + Epsilon evidence across all clusters.
 
 ### 5. Trace Semantics (HTML Report)
-- **Alpha Input Evidence**: concise molecular evidence (Top DEGs + CellxGene candidates when available).
-- **Epsilon Input / Epsilon Output**: pathway step is recorded in strict input/output form.
+- **Alpha Input Evidence**: concise molecular evidence and candidate labels (confidence is not assigned here).
+- **CellxGene Evidence Handling**: candidates are filtered (`score >= 20`) and capped to top 3. If only one candidate is available, only the prediction is shown.
+- **Gamma Batch Input (Per Cluster)**: Top 20 DEGs + CellxGene retrieval + Alpha candidates + Epsilon summary fields (`Primary Theme`, `Secondary Themes`, `States`, `Summary`) + Beta context.
+- **Epsilon Input / Epsilon Output**: pathway step is recorded in strict input/output form, with emphasis on state/program interpretation.
 - **Beta Batch UMAP Critique**: shown in single-cell runs when Beta is executed in batch mode.
 - **Global Batch Gamma Trace**: remains available for whole-dataset decision auditing.
 
@@ -107,11 +109,11 @@ graph TD
 
 TranScribe's orchestration consists of seven specialized agents, executed in a strict 4-phase architecture:
 
-- **Agent Alpha (Molecular Profiler)**: Phase 1. Analyzes purely transcriptomic signals (DEGs and expression profiles) to propose potential candidate cell types.
+- **Agent Alpha (Molecular Profiler)**: Phase 1. Analyzes transcriptomic signals (DEGs and expression profiles) to propose candidate cell identities. Alpha does not assign confidence.
 - **Agent Beta (Spatial/UMAP Contextualizer)**: Phase 1/Batch bridge. Uses neighborhood context (spatial neighbors or UMAP proximity) to test whether candidate labels are contextually plausible.
-- **Agent Epsilon (Pathway Analyst)**: Phase 1. Parses Gene Ontology (GO) enrichment results to infer active cellular states for each cluster.
-- **Agent Gamma (Batch Ontologist & Critic)**: Phase 2. The central decision-maker. It receives a batch payload of *all* clusters and assigns definitive annotations considering the full tissue landscape.
-- **Agent Zeta (Confidence Assessor)**: Phase 3. Performs programmatic marker overlap calculation (`|observed & expected| / |expected|`) to provide a verifiable confidence score.
+- **Agent Epsilon (Pathway Analyst)**: Phase 1. Interprets enriched pathways as biological programs/states and outputs structured themes/summaries for downstream integration.
+- **Agent Gamma (Batch Ontologist & Critic)**: Phase 2. Final decision-maker across all clusters. Integrates CellxGene, DEGs, Alpha, Epsilon, and Beta evidence to produce final `cell_type`, `ontology_id`, and reasoning.
+- **Agent Zeta (Confidence Assessor)**: Phase 3. Sole owner of confidence assessment via programmatic marker overlap (`|observed & expected| / |expected|`) and agreement narrative.
 - **Agent Eta (Descriptor)**: Phase 4. Construct a hierarchical biological summary (lineage tree) of the entire experiment.
 - **Agent Delta (The Evaluator)**: Specializes in biological nomenclature comparisons during benchmark runs.
 
@@ -148,16 +150,16 @@ Configs are stored in the `configs/` directory. Define your models, datasets, an
 
 ```bash
 # Run multi-model evaluation benchmark
-uv run python -m transcribe.cli --config configs/eval_single_cell_config.yaml
+uv run python -m transcribe.cli run --config configs/eval_single_cell_config.yaml
 
 # Run spatial transcriptomics evaluation (Visium)
-uv run python -m transcribe.cli --config configs/eval_spatial_config.yaml
+uv run python -m transcribe.cli run --config configs/eval_spatial_config.yaml
 
 # Run factorized data evaluation (cNMF/spOT-NMF)
-uv run python -m transcribe.cli --config configs/eval_factorized_config.yaml
+uv run python -m transcribe.cli run --config configs/eval_factorized_config.yaml
 
 # Run multi-model inference annotation
-uv run python -m transcribe.cli --config configs/infer_single_cell_config.yaml
+uv run python -m transcribe.cli run --config configs/infer_single_cell_config.yaml
 ```
 
 ### Option B: Single-File Inference
@@ -165,17 +167,17 @@ For quick annotation of a single `.h5ad` file:
 
 ```bash
 # Single-cell RNA-seq
-uv run python -m transcribe.cli --data_path data/pbmc3k.h5ad --cluster_col leiden
+uv run python -m transcribe.cli run --data_path data/pbmc3k.h5ad --cluster_col leiden
 
 # Spatial transcriptomics (automatic detection)
-uv run python -m transcribe.cli --data_path data/spatial.h5ad --cluster_col clusters --modality spatial
+uv run python -m transcribe.cli run --data_path data/spatial.h5ad --cluster_col clusters --modality spatial
 ```
 
 ### Option C: Batch Factorized Inference
 To annotate all factorization ranks in a directory (e.g., `k_5` to `k_70` from cNMF):
 
 ```bash
-uv run python -m transcribe.cli configs/batch_factorized_config.yaml
+uv run python -m transcribe.cli run --config configs/batch_factorized_config.yaml
 ```
 
 ### Option D: CellxGene Census Annotation (NEW)

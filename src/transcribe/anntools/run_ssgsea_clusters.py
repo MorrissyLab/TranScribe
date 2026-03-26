@@ -61,6 +61,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -556,6 +557,134 @@ def _write_top_summary(scores, meta, top_path, bottom_path, top_n, label):
         f"[{label}] Top-{top_n}    -> {top_path.name}\n"
         f"[{label}] Bottom-{top_n} -> {bottom_path.name}"
     )
+
+
+def _ensure_runtime_imports() -> None:
+    """Ensure heavy scientific dependencies are loaded for programmatic API calls."""
+    _check_imports()
+    global gp, np, pd, sparse
+    if "gp" not in globals():
+        import gseapy as gp  # type: ignore
+    if "np" not in globals():
+        import numpy as np  # type: ignore
+    if "pd" not in globals():
+        import pandas as pd  # type: ignore
+    if "sparse" not in globals():
+        from scipy import sparse  # type: ignore
+
+
+def _expr_meta_from_adata(adata, cluster_col: str, sample_id: str = "sample"):
+    """
+    Build expression + metadata matrices compatible with run_collection()
+    directly from an in-memory AnnData object.
+    """
+    _ensure_runtime_imports()
+
+    if cluster_col not in adata.obs.columns:
+        raise ValueError(f"cluster_col '{cluster_col}' not found in adata.obs")
+
+    obs = adata.obs.copy()
+    obs[cluster_col] = obs[cluster_col].astype(str)
+    X = adata.X
+    genes = pd.Index(adata.var_names.astype(str), name="gene")
+
+    vecs = []
+    meta_rows = []
+    clusters_sorted = sorted(obs[cluster_col].unique(), key=lambda x: (len(str(x)), str(x)))
+    for cl in clusters_sorted:
+        idx = np.where(obs[cluster_col].values == cl)[0]
+        if idx.size == 0:
+            continue
+        block = X[idx, :]
+        mean_vec = (
+            np.asarray(block.mean(axis=0)).ravel()
+            if sparse.issparse(block)
+            else np.asarray(block).mean(axis=0).ravel()
+        )
+        col_id = f"{sample_id}|cl{cl}"
+        vecs.append(pd.Series(mean_vec, index=genes, name=col_id))
+        meta_rows.append({
+            "column_id": col_id,
+            "sample_id": str(sample_id),
+            "cluster_id": str(cl),
+            "n_cells": int(idx.size),
+            "source_file": f"{sample_id}.h5ad",
+            "patient_id": infer_patient_id(sample_id),
+        })
+
+    if not vecs:
+        raise ValueError("No clusters found while building expression matrix from adata.")
+
+    expr = (
+        pd.concat(vecs, axis=1)
+        .fillna(0.0)
+        .groupby(level=0)
+        .mean()
+    )
+    meta = pd.DataFrame(meta_rows).drop_duplicates(subset=["column_id"]).set_index("column_id")
+    return expr, meta
+
+
+def compute_ssgsea_for_adata(
+    adata,
+    cluster_col: str,
+    out_dir: Path,
+    sample_id: str = "sample",
+    msigdb_alias: str = "C8",
+    msigdb_version: str = _MSIGDB_DEFAULT_VERSION,
+    top_n: int = 100,
+    min_size: int = 5,
+    max_size: int = 5000,
+    threads: int = 8,
+    weight: float = 0.25,
+):
+    """
+    Programmatic API:
+    Runs ssGSEA for one AnnData object and returns
+    (per_cluster_top_pathways, run_info) while writing full raw outputs to out_dir.
+    """
+    _ensure_runtime_imports()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    alias = msigdb_alias.strip().upper()
+    if alias not in _MSIGDB_COLLECTIONS:
+        raise ValueError(f"Unknown MSigDB alias '{msigdb_alias}'.")
+
+    cache_dir = out_dir / "msigdb_cache"
+    resolved = resolve_msigdb_gmts([alias], msigdb_version, cache_dir)
+    label, gmt_path = resolved[0]
+
+    expr, meta = _expr_meta_from_adata(adata, cluster_col=cluster_col, sample_id=sample_id)
+    args = SimpleNamespace(
+        top_n=top_n,
+        min_size=min_size,
+        max_size=max_size,
+        threads=threads,
+        weight=weight,
+        reuse=False,
+    )
+    run_row = run_collection(label=label, gmt_path=gmt_path, expr=expr, meta=meta, out_dir=out_dir / label, args=args)
+
+    top_path = out_dir / label / f"{label}_top{top_n}_per_cluster.tsv"
+    top_df = pd.read_csv(top_path, sep="\t")
+    per_cluster = {}
+    for cid, grp in top_df.groupby("cluster_id"):
+        grp = grp.sort_values("rank")
+        entries = [
+            {"rank": int(r.rank), "gene_set": str(r.gene_set), "NES": float(r.NES)}
+            for r in grp.itertuples()
+        ]
+        per_cluster[str(cid)] = entries
+
+    run_info = {
+        "collection": label,
+        "msigdb_alias": alias,
+        "msigdb_version": msigdb_version,
+        "top_n": top_n,
+        "files": run_row,
+    }
+    return per_cluster, run_info
 
 
 # ──────────────────────────────────────────────────────────────────────────────

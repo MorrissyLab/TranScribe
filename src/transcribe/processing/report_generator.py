@@ -47,85 +47,102 @@ def _eta_hierarchy_graph_html(eta_summary: dict, cluster_mapping: dict) -> str:
     if not groups:
         return ""
 
-    # Parent categories in columns; groups flow downward to avoid overlap.
-    parent_names = []
+    normalized_groups = []
+    parent_order = []
     for g in groups:
-        p = g.get("parent_group", "Uncategorized")
-        if p not in parent_names:
-            parent_names.append(p)
-    if not parent_names:
-        parent_names = ["Uncategorized"]
+        parent_name = str(g.get("parent_group") or "Uncategorized")
+        if parent_name not in parent_order:
+            parent_order.append(parent_name)
+        normalized_groups.append({
+            "parent": parent_name,
+            "group_name": str(g.get("group_name", "Group")),
+            "member_clusters": [str(c) for c in g.get("member_clusters", [])],
+        })
 
-    width = 980
-    parent_y = 45
-    col_span = width / max(1, len(parent_names))
-    parent_x = {p: (i + 0.5) * col_span for i, p in enumerate(parent_names)}
+    if not parent_order:
+        parent_order = ["Uncategorized"]
 
-    groups_by_parent = {p: [] for p in parent_names}
-    for g in groups:
-        p = g.get("parent_group", "Uncategorized")
-        if p not in groups_by_parent:
-            groups_by_parent[p] = []
-            parent_x[p] = width / 2
-        groups_by_parent[p].append(g)
+    width = max(980, 360 * len(parent_order))
+    root_y = 35
+    parent_y = 105
+    group_top_y = 170
+    col_span = width / max(1, len(parent_order))
+    parent_x = {p: (i + 0.5) * col_span for i, p in enumerate(parent_order)}
 
-    # Compute group positions per parent column.
-    group_positions = []
-    max_rows = 0
-    for p in parent_names:
-        p_groups = groups_by_parent.get(p, [])
-        n = len(p_groups)
-        max_rows = max(max_rows, n)
-        if n == 0:
-            continue
-        gx = parent_x[p]
-        for row_idx, g in enumerate(p_groups):
-            gy = 125 + row_idx * 112
-            group_positions.append((p, g, gx, gy))
+    group_specs = []
+    for p in parent_order:
+        px = parent_x[p]
+        p_groups = [g for g in normalized_groups if g["parent"] == p]
+        y_cursor = group_top_y
+        for g in p_groups:
+            clusters = g["member_clusters"]
+            cluster_lines = []
+            for cid in clusters[:6]:
+                pred = ""
+                if isinstance(cluster_mapping, dict):
+                    pred = cluster_mapping.get(cid, {}).get("pred", "")
+                pred_txt = html.escape(pred) if pred else "Unknown"
+                cluster_lines.append(f"C{html.escape(cid)}: {pred_txt}")
+            if len(clusters) > 6:
+                cluster_lines.append(f"... +{len(clusters) - 6} more")
+            if not cluster_lines:
+                cluster_lines = ["No clusters"]
 
-    graph_height = max(260, 130 + max_rows * 112)
+            line_step = 13
+            box_h = 44 + len(cluster_lines) * line_step
+            group_specs.append({
+                "parent": p,
+                "x": px,
+                "y": y_cursor,
+                "name": html.escape(g["group_name"]),
+                "lines": cluster_lines,
+                "box_h": box_h,
+                "line_step": line_step,
+            })
+            y_cursor += box_h + 20
+
+    max_bottom = max([spec["y"] - 20 + spec["box_h"] for spec in group_specs], default=280)
+    graph_height = max(340, int(max_bottom + 40))
 
     edges = []
-    parent_nodes = []
-    group_nodes = []
-    for p in parent_names:
-        x = parent_x[p]
-        p_label = html.escape(str(p))
-        parent_nodes.append(
-            f'<g><rect x="{x-72:.1f}" y="{parent_y-18}" width="144" height="36" rx="9" '
-            f'fill="rgba(88,166,255,0.12)" stroke="#58a6ff" />'
-            f'<text x="{x:.1f}" y="{parent_y+5}" text-anchor="middle" fill="#c9d1d9" '
-            f'font-size="12" font-weight="700">{p_label}</text></g>'
-        )
+    nodes = []
+    root_x = width / 2
+    nodes.append(
+        f'<g><rect x="{root_x-84:.1f}" y="{root_y-16}" width="168" height="32" rx="10" '
+        f'fill="rgba(246,198,76,0.14)" stroke="#f6c64c" />'
+        f'<text x="{root_x:.1f}" y="{root_y+4}" text-anchor="middle" fill="#f6c64c" '
+        f'font-size="12" font-weight="700">Dataset Composition</text></g>'
+    )
 
-    for p, g, gx, gy in group_positions:
+    for p in parent_order:
+        px = parent_x[p]
         edges.append(
-            f'<line x1="{parent_x[p]:.1f}" y1="{parent_y+18}" x2="{gx:.1f}" y2="{gy-18}" '
-            f'stroke="rgba(188,140,255,0.55)" stroke-width="1.5"/>'
+            f'<line x1="{root_x:.1f}" y1="{root_y+16}" x2="{px:.1f}" y2="{parent_y-18}" '
+            f'stroke="rgba(88,166,255,0.45)" stroke-width="1.4"/>'
         )
-        group_name = html.escape(str(g.get("group_name", "Group")))
-        clusters = [str(c) for c in g.get("member_clusters", [])]
-        cluster_lines = []
-        for cid in clusters[:6]:
-            pred = ""
-            if isinstance(cluster_mapping, dict):
-                pred = cluster_mapping.get(cid, {}).get("pred", "")
-            pred_txt = html.escape(pred) if pred else "Unknown"
-            cluster_lines.append(f"C{html.escape(cid)}: {pred_txt}")
-        if len(clusters) > 6:
-            cluster_lines.append(f"... +{len(clusters) - 6} more")
-        if not cluster_lines:
-            cluster_lines = ["No clusters"]
+        nodes.append(
+            f'<g><rect x="{px-78:.1f}" y="{parent_y-18}" width="156" height="36" rx="9" '
+            f'fill="rgba(56,139,253,0.10)" stroke="rgba(88,166,255,0.8)" />'
+            f'<text x="{px:.1f}" y="{parent_y+5}" text-anchor="middle" fill="#c9d1d9" '
+            f'font-size="11" font-weight="700">{html.escape(str(p))}</text></g>'
+        )
 
-        text_lines = "".join(
-            f'<tspan x="{gx:.1f}" dy="13">{line}</tspan>' for line in cluster_lines
+    for spec in group_specs:
+        px = parent_x[spec["parent"]]
+        gx = spec["x"]
+        gy = spec["y"]
+        edges.append(
+            f'<line x1="{px:.1f}" y1="{parent_y+18}" x2="{gx:.1f}" y2="{gy-18}" '
+            f'stroke="rgba(188,140,255,0.50)" stroke-width="1.3"/>'
         )
-        box_h = 50 + len(cluster_lines) * 13
-        group_nodes.append(
+        text_lines = "".join(
+            f'<tspan x="{gx:.1f}" dy="{spec["line_step"]}">{line}</tspan>' for line in spec["lines"]
+        )
+        nodes.append(
             f'<g>'
-            f'<rect x="{gx-185:.1f}" y="{gy-20}" width="370" height="{box_h}" rx="10" '
-            f'fill="rgba(188,140,255,0.08)" stroke="rgba(188,140,255,0.5)" />'
-            f'<text x="{gx:.1f}" y="{gy}" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="700">{group_name}</text>'
+            f'<rect x="{gx-175:.1f}" y="{gy-20}" width="350" height="{spec["box_h"]}" rx="10" '
+            f'fill="rgba(188,140,255,0.08)" stroke="rgba(188,140,255,0.50)" />'
+            f'<text x="{gx:.1f}" y="{gy}" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="700">{spec["name"]}</text>'
             f'<text x="{gx:.1f}" y="{gy+14}" text-anchor="middle" fill="#8b949e" font-size="10">{text_lines}</text>'
             f'</g>'
         )
@@ -133,7 +150,7 @@ def _eta_hierarchy_graph_html(eta_summary: dict, cluster_mapping: dict) -> str:
     svg = (
         f'<svg viewBox="0 0 {width} {graph_height}" style="width:100%;height:auto;display:block;'
         f'background:rgba(255,255,255,0.02);border:1px solid rgba(188,140,255,0.2);border-radius:10px;padding:8px">'
-        f'{"".join(edges)}{"".join(parent_nodes)}{"".join(group_nodes)}'
+        f'{"".join(edges)}{"".join(nodes)}'
         f'</svg>'
     )
     return svg
@@ -163,6 +180,24 @@ def _load_dataset(item: Path) -> Optional[dict]:
     umap_path    = item / "umap_predicted.png"
     spatial_path = item / "spatial_predicted.png"
     metrics      = data.get("metrics", {})
+    tool_outputs_dir = item / "tool_outputs"
+
+    def _load_json_if_exists(path: Path):
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    tool_outputs = {
+        "cellxgene_full_outputs": _load_json_if_exists(tool_outputs_dir / "cellxgene_full_outputs.json"),
+        "epsilon_pathway_inputs": _load_json_if_exists(tool_outputs_dir / "epsilon_pathway_inputs.json"),
+        "query_marker_database_full": _load_json_if_exists(tool_outputs_dir / "query_marker_database_full.json"),
+        "ssgsea_cluster_top_pathways": _load_json_if_exists(tool_outputs_dir / "ssgsea_cluster_top_pathways.json"),
+        "ssgsea_run_info": _load_json_if_exists(tool_outputs_dir / "ssgsea_run_info.json"),
+    }
 
     return {
         "run_id":          item.name.replace(" ", "_").replace(".", "_").replace("-", "_").lower(),
@@ -179,7 +214,8 @@ def _load_dataset(item: Path) -> Optional[dict]:
         "metadata":        data.get("metadata", {}),
         "hierarchical_summary": data.get("hierarchical_summary", {}),
         "pathway_activity": {cid: r.get("pathway_activity") for cid, r in data.get("raw_results", {}).items() if isinstance(r, dict)},
-        "dir_name":        item.name
+        "dir_name":        item.name,
+        "tool_outputs":    tool_outputs,
     }
 
 
@@ -256,7 +292,7 @@ def _summary_tab(datasets: List[dict]) -> str:
             <div id="bar_legend" style="display:none;justify-content:center;gap:15px;padding:15px;flex-wrap:wrap"></div>
         </div>"""
 
-    heading = "Multi-Agent Evaluation Dashboard" if not all_infer else "Multi-Agent Annotation Dashboard"
+    heading = "Agentic Workflow for Transcription Annotation"
     perf = f"""
         <div style="margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px; display:grid; grid-template-columns: 1fr 2fr; gap:24px">
             <div>
@@ -365,7 +401,8 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict, a
             plot_html = f'<div class="umap-wrap"><h3>{plot_label}</h3><img src="{plot_path}" alt="{plot_label} {ds["name"]}"></div>'
 
     # Eta Hierarchical Summary
-    eta_html = ""
+    eta_text_html = ""
+    eta_graph_html = ""
     eta_summary = ds.get("hierarchical_summary")
     if eta_summary and eta_summary.get("groups"):
         groups_html = ""
@@ -376,12 +413,9 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict, a
         
         gamma_trace_key = f"{run_id}___GLOBAL_GAMMA__"
         all_traces[gamma_trace_key] = ds["traces"].get("__GLOBAL_GAMMA__", [])
-        eta_graph = _eta_hierarchy_graph_html(eta_summary, ds.get("mapping", {}))
+        eta_graph_html = _eta_hierarchy_graph_html(eta_summary, ds.get("mapping", {}))
 
-        eta_html = f"""
-        <div style="margin-bottom:14px">
-            {eta_graph}
-        </div>
+        eta_text_html = f"""
         <div style="font-size:0.9rem;line-height:1.5;margin-bottom:12px;">{eta_summary.get("narrative_summary", "")}</div>
         <ul style="font-size:0.85rem;line-height:1.5;margin:0;padding-left:20px;">
             {groups_html}
@@ -503,56 +537,68 @@ def _experiment_tab(ds: dict, all_traces: dict, all_eval: dict, all_ann: dict, a
 
     return f"""
     <div id="tab_exp_{run_id}" class="tab-pane">
-        <div style="text-align:center;margin-bottom:22px">
-            <h1 style="font-size:2rem">{ds['name']} <span style="font-size:1.1rem;color:#8b949e;font-weight:400">| {model}</span></h1>
-            <div style="font-size:.76rem;color:#6e7681;margin:6px 0">{tag_line}</div>
-            <div style="font-size:.8rem;margin-bottom:10px">Path: <code style="color:#8b949e">{meta.get('data_path','N/A')}</code></div>
-        </div>
-
-        <div class="stats-row">
-            <div class="stat-tile"><div class="stat-label">Duration</div><div class="stat-value">{dur:.1f}s</div></div>
-            <div class="stat-tile"><div class="stat-label">Start</div><div class="stat-value">{start_t}</div></div>
-            <div class="stat-tile"><div class="stat-label">Tries</div><div class="stat-value">{num_tries}</div></div>
-            <div class="stat-tile" style="display:flex;flex-direction:column;gap:6px;align-items:center">{acc_html}</div>
+        <div class="exp-top-shell">
+            <div class="exp-top-main">
+                <h1 style="font-size:1.9rem; margin-bottom:6px">{ds['name']}</h1>
+                <div style="font-size:.93rem;color:#8b949e; margin-bottom:8px">
+                    <strong style="color:#c9d1d9">Model:</strong> <code style="color:var(--blue)">{model}</code>
+                </div>
+                <div style="font-size:.82rem;color:#6e7681;margin-bottom:8px">{tag_line}</div>
+                <div style="font-size:.82rem;line-height:1.5">
+                    <strong style="color:#c9d1d9">Path:</strong>
+                    <code style="color:#8b949e">{meta.get('data_path','N/A')}</code>
+                </div>
+            </div>
+            <div class="exp-top-side">
+                <div class="exp-kpi-grid">
+                    <div class="stat-tile"><div class="stat-label">Duration</div><div class="stat-value">{dur:.1f}s</div></div>
+                    <div class="stat-tile"><div class="stat-label">Start</div><div class="stat-value">{start_t}</div></div>
+                    <div class="stat-tile"><div class="stat-label">Tries</div><div class="stat-value">{num_tries}</div></div>
+                    <div class="stat-tile" style="display:flex;flex-direction:column;gap:6px;align-items:center">{acc_html if acc_html else '<span style="font-size:.8rem;color:#8b949e">Inference Run</span>'}</div>
+                </div>
+            </div>
         </div>
 
         {singleton_warning}
 
-        <div class="experiment-grid">
-            <!-- LEFT PANEL: TABLE & CARDS -->
-            <div class="experiment-left">
-                <div class="view-toggle-row">
-                    <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
-                    <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>
-                </div>
-
-                <div id="tbl_{run_id}" style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2)">
-                    <h3 style="margin-bottom:16px; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 10px">Cluster Inventory</h3>
-                    <table class="data-table">
-                        <thead>{thead}</thead>
-                        <tbody>{tbl_rows}</tbody>
-                    </table>
-                </div>
-
-                <div id="cards_{run_id}" class="cluster-grid" style="display:none">
-                    {card_html}
+        <div class="eta-master-section">
+            <h3>Dataset Biological Insight | Agent Eta</h3>
+            <div class="eta-top-sticky">
+                <div class="experiment-top-grid">
+                    <div class="top-summary-panel">
+                        {eta_text_html if eta_text_html else '<div style="color:#484f58; font-style:italic">No hierarchical summary available for this experiment.</div>'}
+                        <div style="margin-top:15px; border-top:1px solid rgba(188,140,255,0.2); padding-top:12px">
+                            <button class="btn btn-purple" onclick="openTrace('{run_id}___GLOBAL_GAMMA__','Batch Gamma (Final Decision) Trace')">View Batch Gamma Trace</button>
+                        </div>
+                    </div>
+                    <div class="top-viz-panel">
+                        <h3 style="margin-bottom:12px; font-size: 1rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px">Visualization</h3>
+                        {plot_html if plot_html else '<div style="padding:40px; background:rgba(255,255,255,0.02); border-radius:12px; border:1px dashed var(--border); text-align:center; color:#484f58">No Plots Available</div>'}
+                    </div>
                 </div>
             </div>
 
-            <!-- RIGHT PANEL: PLOTS & ETA SUMMARY -->
-            <div class="experiment-right">
-                <div class="umap-wrap">
-                    <h3 style="margin-bottom:12px; font-size: 1rem; color: #8b949e; text-transform: uppercase; letter-spacing: 1px">Visualization</h3>
-                    {plot_html if plot_html else '<div style="padding:40px; background:rgba(255,255,255,0.02); border-radius:12px; border:1px dashed var(--border); text-align:center; color:#484f58">No Plots Available</div>'}
-                </div>
-                
-                <div class="eta-summary-box">
-                    <h3>Dataset Biological Insight | Agent Eta</h3>
-                    {eta_html if eta_html else '<div style="color:#484f58; font-style:italic">No hierarchical summary available for this experiment.</div>'}
-                    <div style="margin-top:15px; border-top:1px solid rgba(188,140,255,0.2); padding-top:12px">
-                        <button class="btn btn-purple" onclick="openTrace('{run_id}___GLOBAL_GAMMA__','Batch Gamma (Final Decision) Trace')">View Batch Gamma Trace</button>
-                    </div>
-                </div>
+            <div class="eta-graph-section">
+                {eta_graph_html if eta_graph_html else '<div style="color:#484f58; font-style:italic">No hierarchy graph available for this experiment.</div>'}
+            </div>
+        </div>
+
+        <div class="bottom-results-section">
+            <div class="view-toggle-row">
+                <button class="btn-toggle active vtbtn_{run_id}" onclick="switchView('table','{run_id}')">Table View</button>
+                <button class="btn-toggle vtbtn_{run_id}" onclick="switchView('cards','{run_id}')">Card View</button>
+            </div>
+
+            <div id="tbl_{run_id}" style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2)">
+                <h3 style="margin-bottom:16px; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 10px">Cluster Inventory</h3>
+                <table class="data-table">
+                    <thead>{thead}</thead>
+                    <tbody>{tbl_rows}</tbody>
+                </table>
+            </div>
+
+            <div id="cards_{run_id}" class="cluster-grid" style="display:none">
+                {card_html}
             </div>
         </div>
     </div>

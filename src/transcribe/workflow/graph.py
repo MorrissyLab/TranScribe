@@ -35,6 +35,7 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
         
         # Query CellxGene WMG for population-level evidence
         cxg_str = "None"
+        cxg_result = None
         try:
             organism = meta.get("organism", "Human")
             tissue = meta.get("tissue_type", "Unknown")
@@ -42,7 +43,7 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
                 cellxgene_annotator = CellxGeneAnnotator(organism=organism)
             cxg_result = cellxgene_annotator.query(state["top_degs"][:20], tissue=tissue)
             if cxg_result and cxg_result.get("candidates"):
-                cxg_str = ", ".join([f"{name} ({score:.3f})" for name, score in cxg_result["candidates"][:5]])
+                cxg_str = ", ".join([f"{name} ({score:.3f})" for name, score in cxg_result["candidates"][:3]])
                 data_parts.append(f"CellxGene WMG Candidates: {cxg_str}")
         except Exception as e:
             logger.warning(f"CellxGene query failed for cluster {state['cluster_id']}: {e}")
@@ -72,21 +73,18 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
             "role": "Alpha Annotation", 
             "content": result.model_dump_json(indent=2) if hasattr(result, 'model_dump_json') else str(result)
         })
+        if cxg_result is not None:
+            messages.append({
+                "role": "Alpha Tool Output (CellxGene)",
+                "content": cxg_result,
+            })
         return {"alpha_candidates": result, "messages": messages}
 
     def run_epsilon(state: AgentState):
-        from transcribe.tools.biology_tools import gsea_tool
         meta = state.get("metadata", {})
-        
-        # Call GSEA Tool programmatically (programmatic calling as requested)
-        try:
-            pathway_results = gsea_tool.func(state["top_degs"][:50])
-            pe = str(pathway_results)
-        except Exception as e:
-            logger.warning(f"GSEA Tool failed for cluster {state['cluster_id']}: {e}")
-            pe = state.get("pathway_enrichment") or "None available"
-        
-        if not pe or str(pe).lower() == "none available":
+
+        pe = state.get("pathway_enrichment")
+        if not pe:
             return {"pathway_analysis": None}
 
         logger.info(f"[Agent Call] Epsilon | cluster={state['cluster_id']}")
@@ -95,17 +93,16 @@ def build_workflow(provider: str = "gemini", model_name: str = DEFAULT_MODEL_NAM
             "tissue_type": meta.get("tissue_type", "Unknown"),
             "disease": meta.get("disease", "Unknown"),
             "cluster_id": state["cluster_id"],
-            "pathway_enrichment": pe
+            "pathway_enrichment": str(pe)
         })
         messages = state.get("messages", [])
         messages.append({
             "role": "Epsilon Input",
-            "content": f"Genes: {state['top_degs'][:50]}"
+            "content": str(pe)
         })
         messages.append({
             "role": "Epsilon Output",
             "content": (
-                f"GSEA Scores: {pe}\n\n"
                 f"Pathway Analysis: "
                 f"{result.model_dump_json(indent=2) if hasattr(result, 'model_dump_json') else str(result)}"
             )

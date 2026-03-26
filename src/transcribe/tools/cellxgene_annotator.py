@@ -11,6 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 from transcribe.config import logger
 
 class CellxGeneAnnotator:
+    MIN_CANDIDATE_SCORE = 20.0
+    MAX_CANDIDATES = 3
+
     def __init__(self, organism: str = "Human"):
         """
         Dynamic WMG-based annotator.
@@ -184,6 +187,8 @@ class CellxGeneAnnotator:
             results.append((name, norm_score))
 
         results.sort(key=lambda x: x[1], reverse=True)
+        # Keep only strong candidates as requested.
+        results = [r for r in results if r[1] >= self.MIN_CANDIDATE_SCORE][: self.MAX_CANDIDATES]
         
         if not results:
             return {
@@ -197,7 +202,7 @@ class CellxGeneAnnotator:
         return {
             "prediction": top_cand,
             "score": top_score,
-            "candidates": results[:10]  # Return top 10
+            "candidates": results
         }
 
 def process_excel_markers(excel_path: str) -> Dict[str, Any]:
